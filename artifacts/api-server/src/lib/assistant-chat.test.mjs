@@ -52,6 +52,7 @@ test("detects Taiwan stock quote and action questions and extracts numeric ticke
   assert.equal(isTaiwanStockQuoteQuestion("2330 現在股價多少？"), true);
   assert.equal(isTaiwanStockQuoteQuestion("2330 現在多少？"), true);
   assert.equal(isTaiwanStockQuoteQuestion("2330 即時行情"), true);
+  assert.equal(isTaiwanStockQuoteQuestion("6223今日走勢"), true);
   assert.equal(isTaiwanStockQuoteQuestion("台積電現在多少？"), true);
   assert.equal(isTaiwanStockActionQuestion("台積電建議怎麼操作？"), true);
   assert.equal(isTaiwanStockActionQuestion("2330 可以買進嗎？"), true);

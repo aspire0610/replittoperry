@@ -35,7 +35,7 @@ export function isTaiwanMarketActionFollowUp(
 }
 
 export function isTaiwanStockQuoteQuestion(question: string): boolean {
-  return /成交價|股價|個股.{0,8}(?:行情|報價|價格)|(?:行情|報價|價格).{0,8}(?:個股|股票)|現價|目前股價|現在股價|(?:即時|目前|現在|最新).{0,4}(?:行情|報價|價格|多少)|\b\d{4,6}\b.{0,10}(?:多少|幾多|多少錢)/u.test(
+  return /成交價|股價|個股.{0,8}(?:行情|報價|價格)|(?:行情|報價|價格).{0,8}(?:個股|股票)|現價|目前股價|現在股價|(?:即時|目前|現在|最新).{0,4}(?:行情|報價|價格|多少)|\b\d{4,6}\b.{0,10}(?:多少|幾多|多少錢)|\b\d{4,6}\b.{0,12}(?:走勢|趨勢|表現)/u.test(
     question.replace(/\s+/gu, ""),
   );
 }
