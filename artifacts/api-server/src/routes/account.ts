@@ -1,6 +1,5 @@
 import { createHmac, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { clerkClient, getAuth, type User } from "@clerk/express";
-import type { AssistantChatReply } from "@workspace/api-zod";
 import {
   DeleteAccountLineLinkResponse,
   DeleteAdminUserParams,
@@ -52,6 +51,10 @@ import {
   saveStockAiConversation,
 } from "../lib/stock-ai-conversations.js";
 import { askAssistantChat } from "../lib/assistant-chat.js";
+import {
+  formatLineAssistantReply,
+  type LineAssistantMessage,
+} from "../lib/line-assistant-format.js";
 import { diagnoseLineWebSearch } from "../lib/line-web-search.js";
 import {
   clearLineAssistantHistory,
@@ -193,7 +196,10 @@ function verifyLineLinkToken(token: string): { userId: string; expiresAt: number
   }
 }
 
-async function replyToLine(replyToken: string, text: string): Promise<void> {
+async function replyToLine(
+  replyToken: string,
+  message: string | LineAssistantMessage,
+): Promise<void> {
   const accessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
   if (!accessToken) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is not configured");
   const response = await fetch("https://api.line.me/v2/bot/message/reply", {
@@ -204,7 +210,9 @@ async function replyToLine(replyToken: string, text: string): Promise<void> {
     },
     body: JSON.stringify({
       replyToken,
-      messages: [{ type: "text", text }],
+      messages: [
+        typeof message === "string" ? { type: "text", text: message } : message,
+      ],
     }),
     signal: AbortSignal.timeout(10_000),
   });
@@ -229,26 +237,6 @@ function isLineAssistantRateLimited(lineUserId: string): boolean {
   if (current.count >= LINE_ASSISTANT_LIMIT) return true;
   current.count += 1;
   return false;
-}
-
-function formatLineAssistantReply(reply: AssistantChatReply): string {
-  const answer = reply.answer.trim().slice(0, 4_000);
-  if (!reply.sources.length) return answer;
-  const sourceHeader = "\n\n參考來源：";
-  let result = answer + sourceHeader;
-  for (const source of reply.sources.slice(0, 5)) {
-    let url: URL;
-    try {
-      url = new URL(source.url);
-    } catch {
-      continue;
-    }
-    if (!["http:", "https:"].includes(url.protocol)) continue;
-    const line = `\n• ${source.title.slice(0, 180)}\n${url.toString()}`;
-    if (result.length + line.length > 4_900) break;
-    result += line;
-  }
-  return result === answer + sourceHeader ? answer : result;
 }
 
 type AppMetadata = {
