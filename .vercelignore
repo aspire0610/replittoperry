@@ -1,0 +1,40 @@
+# Local Replit state, credentials, caches, and Python-only environment
+.git/
+.local/
+.agents/
+.conversation/
+.cache/
+.config/
+.pythonlibs/
+.upm/
+__pycache__/
+.env*
+.vercel/
+
+# Generated build artifacts and installed dependencies; Vercel rebuilds these.
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+**/.vite/
+**/*.map
+
+# User uploads and unrelated Streamlit/mockup products
+attached_assets/
+app.py
+main.py
+pyproject.toml
+uv.lock
+.replit
+.replitignore
+replit.md
+artifacts/mockup-sandbox/
+artifacts/**/.replit-artifact/
+
+# Keep the workspace manifest because pnpm-lock.yaml has a scripts importer.
+# The application deployment does not need the helper sources or their config.
+scripts/src/
+scripts/tsconfig.json
+scripts/tsconfig.tsbuildinfo
+scripts/post-merge.sh
+scripts/deploy-vercel.mjs

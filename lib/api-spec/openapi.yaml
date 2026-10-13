@@ -1,0 +1,3189 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: market
+    description: Taiwan market data
+  - name: stocks
+    description: Taiwan stock data
+  - name: assistant
+    description: General AI chat operations
+  - name: account
+    description: Authenticated account and watchlist operations
+  - name: quant
+    description: AI-assisted quantitative research and paper trading
+  - name: admin
+    description: Administrator user management
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /market/overview:
+    get:
+      operationId: getMarketOverview
+      tags: [market]
+      summary: Get Taiwan market quotes
+      description: Returns provider-sourced TAIEX and Taiwan futures quotes with exchange timestamps. Delayed quotes are not presented as current trading data.
+      responses:
+        "200":
+          description: Market quotes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketOverview"
+        "502":
+          description: Market data provider unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /futures/ai-day-strategy:
+    get:
+      operationId: getFuturesAiDayStrategy
+      tags: [market]
+      summary: Get a Taiwan index futures day-session strategy
+      description: Returns an intraday futures assessment using current session quotes and available TAIEX context. It does not invent intraday futures bars or exact order prices.
+      responses:
+        "200":
+          description: Day-session futures strategy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FuturesAiDayStrategy"
+        "429":
+          description: AI request limit reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Market data or AI provider unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /market/summary:
+    get:
+      operationId: getMarketSummary
+      tags: [market]
+      summary: Get market trend summary
+      description: Returns the TAIEX trend, moving averages, and transparent rule-based market factors.
+      responses:
+        "200":
+          description: Market trend summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketSummary"
+        "502":
+          description: Market data provider unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /market/ai-daily-summary:
+    get:
+      operationId: getMarketAiDailySummary
+      tags: [market]
+      summary: Get today's AI pre-market summary
+      description: Combines the latest TAIEX quote, official historical technical indicators, and recent web-search news leads. Quote and news timestamps are returned for context.
+      responses:
+        "200":
+          description: AI daily market summary or an explicit unavailable result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketAiDailySummary"
+        "429":
+          description: AI request rate limit reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Market data provider unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /market/intraday:
+    get:
+      operationId: getMarketIntraday
+      tags: [market]
+      summary: Get the current TAIEX session's one-minute candles
+      description: Returns verified one-minute TAIEX candles from the session open through the latest available candle.
+      responses:
+        "200":
+          description: TAIEX intraday history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketIntradayHistory"
+        "502":
+          description: Intraday market data provider unavailable or inconsistent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /market/history:
+    get:
+      operationId: getMarketHistory
+      tags: [market]
+      summary: Get TAIEX daily history
+      parameters:
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["1mo", "3mo", "6mo", "1y"]
+            default: "1y"
+      responses:
+        "200":
+          description: TAIEX daily OHLCV history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketHistory"
+        "502":
+          description: Market data provider unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /stocks/history:
+    get:
+      operationId: getStockHistory
+      tags: [stocks]
+      summary: Get Taiwan stock daily history
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 20
+            pattern: "^[A-Za-z0-9.^=-]{1,20}$"
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["1mo", "3mo", "6mo", "1y"]
+            default: "1y"
+      responses:
+        "200":
+          description: Stock daily OHLCV history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockHistory"
+        "400":
+          description: Invalid symbol or range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Symbol is inactive, delisted, or has no exchange history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Market data provider unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /stocks/catalog:
+    get:
+      operationId: getStockCatalog
+      tags: [stocks]
+      summary: Get current listed and OTC stocks and ETFs
+      description: Returns active listed and OTC stock and ETF codes from official TWSE and TPEx daily market reports.
+      responses:
+        "200":
+          description: Current listed and OTC securities
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockCatalog"
+        "502":
+          description: An official exchange catalog is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /stocks/research-data:
+    get:
+      operationId: getStockResearchData
+      tags: [stocks]
+      summary: Get official Taiwan stock financial and institutional data
+      description: Returns independently sourced MOPS quarterly financial statements and TWSE/TPEx daily institutional trading data. Missing datasets remain unavailable and are never filled with inferred zeros.
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^[A-Za-z0-9]{4,6}$"
+        - name: ticker
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: "^[A-Za-z0-9]{4,6}\\.(TW|TWO)$"
+      responses:
+        "200":
+          description: Official research data with source provenance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockResearchData"
+        "400":
+          description: Invalid Taiwan stock symbol
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Official data providers unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /stocks/ai-assessment:
+    get:
+      operationId: getStockAiAssessment
+      tags: [stocks]
+      summary: Get AI-assisted Taiwan stock assessment
+      description: Evaluates the latest provider-sourced quote and exchange daily indicators, with conditional technical price references when validated. Includes a separate fixed-rule historical strategy backtest; this is not the AI recommendation's win rate or investment advice.
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^[A-Za-z0-9]{4,6}(\\.(TW|TWO))?$"
+      responses:
+        "200":
+          description: AI-assisted stock outlook and conditional action guidance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockAiAssessment"
+        "400":
+          description: Invalid Taiwan stock symbol
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Market data or AI provider unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: AI assessment rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /stocks/ai-buy-verdict:
+    post:
+      operationId: evaluateStockAiBuyPrice
+      tags: [stocks]
+      summary: Evaluate a user-planned Taiwan stock entry price
+      description: Uses the latest available stock quote and validated AI assessment to return an informational buy or do-not-buy verdict for the submitted price.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StockAiBuyPriceInput"
+      responses:
+        "200":
+          description: AI verdict for the planned buy price
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockAiBuyPriceVerdict"
+        "400":
+          description: Invalid stock symbol or planned price
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: AI request or upstream provider rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: AI provider unavailable or returned an invalid response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "504":
+          description: AI provider response timed out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /stocks/ai-assistant:
+    post:
+      operationId: askStockAiAssistant
+      tags: [stocks]
+      summary: Ask a contextual Taiwan stock AI assistant
+      description: Answers an operational question using the selected stock's latest available quote, AI assessment, and market overview. This is informational, not personalized investment advice.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StockAiAssistantQuestion"
+      responses:
+        "200":
+          description: Contextual AI answer and data timestamps
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockAiAssistantReply"
+        "400":
+          description: Invalid stock symbol or question
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: AI request rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Market data or AI provider unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /assistant/chat:
+    post:
+      operationId: askAssistantChat
+      tags: [assistant]
+      summary: Ask the general AI chat assistant
+      description: Answers general questions and can search the web for current or factual information. Financial answers use verified source data and are not personalized investment advice.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssistantChatRequest"
+      responses:
+        "200":
+          description: AI chat answer with source links and search status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistantChatReply"
+        "400":
+          description: Invalid question or stock symbol
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: AI request rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: AI provider unavailable or returned an invalid response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "504":
+          description: AI provider response timed out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /account/me:
+    get:
+      operationId: getAccountMe
+      tags: [account]
+      summary: Get the signed-in user's account profile
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Account profile and private watchlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountProfile"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Account has not been invited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /account/line-notifications:
+    get:
+      operationId: getAccountLineNotifications
+      tags: [account]
+      summary: Get LINE notification settings for the signed-in user
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: LINE link status, alert rules, and daily report settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LineNotifications"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: putAccountLineNotifications
+      tags: [account]
+      summary: Replace the signed-in user's LINE alert and report settings
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LineNotificationsUpdate"
+      responses:
+        "200":
+          description: Saved LINE notification settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LineNotifications"
+        "400":
+          description: Invalid settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /account/line-notifications/link-code:
+    post:
+      operationId: postAccountLineLinkCode
+      tags: [account]
+      summary: Create a short-lived one-time code to link a LINE user
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: One-time code and expiry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LineLinkCode"
+  /account/line-notifications/link:
+    delete:
+      operationId: deleteAccountLineLink
+      tags: [account]
+      summary: Unlink the signed-in user's LINE account
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: LINE account unlinked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LineNotifications"
+  /line/webhook:
+    post:
+      operationId: postLineWebhook
+      tags: [line]
+      summary: Receive signed LINE Messaging API events
+      responses:
+        "200":
+          description: Webhook accepted
+        "401":
+          description: Invalid webhook signature
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /account/watchlist:
+    put:
+      operationId: putAccountWatchlist
+      tags: [account]
+      summary: Replace the signed-in user's private watchlist
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WatchlistUpdate"
+      responses:
+        "200":
+          description: Updated account profile and private watchlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountProfile"
+        "400":
+          description: Invalid watchlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Account has not been invited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /account/stock-ai-conversation:
+    get:
+      operationId: getAccountStockAiConversation
+      tags: [account]
+      summary: Get the signed-in user's conversation for one stock
+      security:
+        - clerkSession: []
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^[A-Za-z0-9]{4,6}(\\.(TW|TWO))?$"
+      responses:
+        "200":
+          description: Saved conversation, or an empty conversation when none exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockAiConversation"
+        "400":
+          description: Invalid stock symbol
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Account has not been invited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Conversation storage is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: putAccountStockAiConversation
+      tags: [account]
+      summary: Save the signed-in user's conversation for one stock
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StockAiConversationUpdate"
+      responses:
+        "200":
+          description: Saved conversation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockAiConversation"
+        "400":
+          description: Invalid conversation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Account has not been invited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Conversation storage is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteAccountStockAiConversation
+      tags: [account]
+      summary: Delete the signed-in user's saved conversation for one stock
+      security:
+        - clerkSession: []
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^[A-Za-z0-9]{4,6}(\\.(TW|TWO))?$"
+      responses:
+        "204":
+          description: Conversation deleted, if one existed
+        "400":
+          description: Invalid stock symbol
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Account has not been invited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Conversation storage is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /account/quant-research/interpret:
+    post:
+      operationId: postAccountQuantResearchInterpret
+      tags: [quant]
+      summary: Interpret a Taiwan quantitative research hypothesis
+      description: Uses an allowed AI provider to convert the user's hypothesis into explicit, reviewable backtest assumptions. Does not load market data or start a backtest.
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuantResearchInput"
+      responses:
+        "200":
+          description: AI interpretation for user review before backtesting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuantResearchInterpretation"
+        "400":
+          description: Invalid research parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: AI request rate limit reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: AI interpretation is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /account/quant-research:
+    post:
+      operationId: postAccountQuantResearch
+      tags: [quant]
+      summary: Backtest a confirmed Taiwan quantitative research plan
+      description: Requires the AI interpretation previously shown to and confirmed by the user. Calculates performance deterministically from official TWSE and TPEx daily market reports. No broker orders are sent.
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuantResearchExecutionInput"
+      responses:
+        "200":
+          description: Reproducible strategy and deterministic backtest result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuantResearchResult"
+        "400":
+          description: Invalid research parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: AI request rate limit reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: An official exchange data source is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Free AI provider or required storage is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /account/quant-research/stream:
+    post:
+      operationId: postAccountQuantResearchStream
+      tags: [quant]
+      summary: Design and backtest a strategy with live progress events
+      description: The response is a Server-Sent Events stream. Each data frame contains a JSON QuantResearchStreamEvent, with progress events during AI provider attempts and official market-data retrieval, followed by one result or error event. Successful results include the explicit AI-generated buy and sell conditions used by the backtest.
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuantResearchExecutionInput"
+      responses:
+        "200":
+          description: Live progress followed by the reproducible backtest result or a safe error
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          description: Invalid research parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Account has not been invited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: AI request rate limit reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: An official exchange data source is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Free AI provider or required storage is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /account/quant-research-runs:
+    get:
+      operationId: getAccountQuantResearchRuns
+      tags: [quant]
+      summary: List the signed-in user's recent strategy research runs
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Recent research runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuantResearchRunList"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Account has not been invited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteAccountQuantResearchRuns
+      tags: [quant]
+      summary: Delete all saved strategy research runs for the signed-in user
+      security:
+        - clerkSession: []
+      responses:
+        "204":
+          description: All saved research runs deleted, or no runs existed
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Account has not been invited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /account/quant-research-runs/{runId}:
+    get:
+      operationId: getAccountQuantResearchRun
+      tags: [quant]
+      summary: Load one of the signed-in user's saved research runs
+      security:
+        - clerkSession: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Saved strategy and backtest result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuantResearchResult"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Account has not been invited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Research run not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /account/quant-research-runs/{runId}/summary:
+    post:
+      operationId: postAccountQuantResearchRunSummary
+      tags: [quant]
+      summary: Generate and save a plain-language AI summary for a saved research run
+      security:
+        - clerkSession: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Plain-language summary based on the saved official-data backtest
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuantResearchRunSummaryResponse"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Account has not been invited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Research run not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The AI summary provider is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /account/paper-trading:
+    get:
+      operationId: getAccountPaperTrading
+      tags: [quant]
+      summary: Get the signed-in user's paper-trading account
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Current simulated cash, positions, and trade history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaperTradingPortfolio"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Account has not been invited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: postAccountPaperTrading
+      tags: [quant]
+      summary: Initialize the signed-in user's paper-trading account
+      description: Sets starting simulated cash once. Later paper-trade prices are entered by the signed-in user and never reach a broker.
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaperTradingAccountInput"
+      responses:
+        "201":
+          description: Initialized paper-trading account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaperTradingPortfolio"
+        "400":
+          description: Invalid starting cash
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Account has not been invited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Account is already initialized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /account/paper-trading/reset:
+    post:
+      operationId: postAccountPaperTradingReset
+      tags: [quant]
+      summary: Reset the signed-in user's paper-trading account to its starting cash
+      description: Deletes that user's paper positions and trade history, and restores cash to the account's original starting amount.
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Reset paper-trading portfolio
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaperTradingPortfolio"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Account has not been invited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Paper-trading account is not initialized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /account/paper-trading/trades:
+    post:
+      operationId: postAccountPaperTrade
+      tags: [quant]
+      summary: Record a simulated buy or sell at the price entered by the user
+      description: Updates only the paper ledger using the entered price, estimated commission, and stock transaction tax. The latest official quote is used only to verify the symbol and classify fees. Does not connect to a brokerage.
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaperTradeInput"
+      responses:
+        "201":
+          description: Recorded paper trade and updated portfolio
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaperTradingPortfolio"
+        "400":
+          description: Invalid trade or insufficient cash/shares
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Account has not been invited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Paper-trading account must be initialized first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Official exchange data is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /admin/users:
+    get:
+      operationId: getAdminUsers
+      tags: [admin]
+      summary: Search Clerk user accounts and their application access status
+      security:
+        - clerkSession: []
+      parameters:
+        - name: query
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 120
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: User accounts visible to an administrator
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserList"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Administrator access required or the account is not authorized for role changes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /admin/web-search-diagnostic:
+    post:
+      operationId: postAdminWebSearchDiagnostic
+      tags: [admin]
+      summary: Run a fixed configured web-search connectivity and parsing check without invoking an AI model
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Search-provider connectivity diagnostic with result content omitted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminWebSearchDiagnostic"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Administrator access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /admin/invitations:
+    post:
+      operationId: postAdminInvitation
+      tags: [admin]
+      summary: Invite a user by email
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InviteUserInput"
+      responses:
+        "201":
+          description: Invitation created and email notification requested; delivery is not verified
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvitationSummary"
+        "400":
+          description: Invalid email address
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Email already has an account or invitation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Administrator access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /admin/users/{userId}:
+    patch:
+      operationId: patchAdminUser
+      tags: [admin]
+      summary: Change a user's role or account access
+      security:
+        - clerkSession: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminUserUpdate"
+      responses:
+        "200":
+          description: Updated user account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+        "400":
+          description: Invalid update
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Administrator access required or the account is not authorized for role changes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteAdminUser
+      tags: [admin]
+      summary: Permanently delete a member account and its dashboard data
+      description: Administrators cannot delete themselves, the bootstrap administrator, or another administrator account.
+      security:
+        - clerkSession: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+      responses:
+        "204":
+          description: Clerk account and account-owned dashboard data permanently deleted
+        "400":
+          description: Cannot delete self or administrator account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Administrator access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Clerk deletion or application-data cleanup failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  securitySchemes:
+    clerkSession:
+      type: http
+      scheme: bearer
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+    FuturesAiDayStrategy:
+      type: object
+      required: [status, action, summary, entryCondition, invalidationCondition, riskNote, aiProvider, dataCoverage, dayQuote, nightQuote, taiexQuote, analyzedAt, disclaimer]
+      properties:
+        status:
+          type: string
+          enum: [available, waiting_for_day_session, insufficient_data]
+        action:
+          type: string
+          enum: [long, short, wait, insufficient]
+        summary:
+          type: string
+          maxLength: 180
+        entryCondition:
+          type: string
+          maxLength: 180
+        invalidationCondition:
+          type: string
+          maxLength: 180
+        riskNote:
+          type: string
+          maxLength: 180
+        aiProvider:
+          type: ["string", "null"]
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, null]
+        dataCoverage:
+          type: string
+          enum: [quote_only, unavailable]
+        dayQuote:
+          $ref: "#/components/schemas/MarketQuote"
+        nightQuote:
+          $ref: "#/components/schemas/MarketQuote"
+        taiexQuote:
+          $ref: "#/components/schemas/MarketQuote"
+        analyzedAt:
+          type: string
+          format: date-time
+        disclaimer:
+          type: string
+          maxLength: 220
+    MarketQuote:
+      type: object
+      properties:
+        key:
+          type: string
+          enum: [taiex, futures_day, futures_night, us_tsm_adr, us_sox]
+        name:
+          type: string
+        ticker:
+          type: string
+        price:
+          type: ["number", "null"]
+        change:
+          type: ["number", "null"]
+        changePercent:
+          type: ["number", "null"]
+        source:
+          type: ["string", "null"]
+        asOf:
+          type: ["string", "null"]
+          format: date-time
+        available:
+          type: boolean
+        error:
+          type: ["string", "null"]
+      required: [key, name, ticker, price, change, changePercent, source, asOf, available, error]
+    MarketOverview:
+      type: object
+      properties:
+        asOf:
+          type: ["string", "null"]
+          format: date-time
+        indices:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketQuote"
+      required: [asOf, indices]
+    MarketFactor:
+      type: object
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        passed:
+          type: ["boolean", "null"]
+        observedValue:
+          type: ["number", "null"]
+        threshold:
+          type: ["number", "null"]
+      required: [key, label, passed, observedValue, threshold]
+    MarketSummary:
+      type: object
+      properties:
+        ticker:
+          type: string
+        source:
+          type: string
+        asOf:
+          type: string
+          format: date-time
+        currentPrice:
+          type: number
+        change:
+          type: number
+        changePercent:
+          type: number
+        dailyCloseDate:
+          type: string
+          format: date
+        dailyCloseSource:
+          type: string
+        dailyClosePrice:
+          type: number
+        dailyCloseChange:
+          type: number
+        dailyCloseChangePercent:
+          type: number
+        ma20:
+          type: ["number", "null"]
+        ma60:
+          type: ["number", "null"]
+        ma120:
+          type: ["number", "null"]
+        score:
+          type: ["integer", "null"]
+        status:
+          type: string
+          enum: [bullish, neutral, bearish, insufficient]
+        factors:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketFactor"
+      required: [ticker, source, asOf, currentPrice, change, changePercent, dailyCloseDate, dailyCloseSource, dailyClosePrice, dailyCloseChange, dailyCloseChangePercent, ma20, ma60, ma120, score, status, factors]
+    MarketAiDailySummary:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [available, unavailable]
+        marketDate:
+          type: string
+          format: date
+        source:
+          type: string
+        quoteAsOf:
+          type: ["string", "null"]
+          format: date-time
+        newsSearchStatus:
+          type: string
+          enum: [searched, no_results, unavailable]
+        newsSources:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketNewsSource"
+        summary:
+          type: ["string", "null"]
+          maxLength: 500
+        aiProvider:
+          type: ["string", "null"]
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, null]
+        analyzedAt:
+          type: ["string", "null"]
+          format: date-time
+        error:
+          type: ["string", "null"]
+          maxLength: 320
+      required: [status, marketDate, source, quoteAsOf, newsSearchStatus, newsSources, summary, aiProvider, analyzedAt, error]
+    MarketNewsSource:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 180
+        url:
+          type: string
+          format: uri
+        snippet:
+          type: string
+          maxLength: 500
+      required: [title, url, snippet]
+    OhlcBar:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+        open:
+          type: number
+        high:
+          type: number
+        low:
+          type: number
+        close:
+          type: number
+        volume:
+          type: ["number", "null"]
+      required: [date, open, high, low, close, volume]
+    MarketHistory:
+      type: object
+      properties:
+        ticker:
+          type: string
+        source:
+          type: string
+        range:
+          type: string
+        asOf:
+          type: string
+          format: date-time
+        bars:
+          type: array
+          items:
+            $ref: "#/components/schemas/OhlcBar"
+      required: [ticker, source, range, asOf, bars]
+    MarketIntradayBar:
+      type: object
+      properties:
+        time:
+          type: string
+          format: date-time
+        open:
+          type: number
+        high:
+          type: number
+        low:
+          type: number
+        close:
+          type: number
+        volume:
+          type: ["number", "null"]
+      required: [time, open, high, low, close, volume]
+    MarketIntradayHistory:
+      type: object
+      properties:
+        ticker:
+          type: string
+        date:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        timeframe:
+          type: string
+          enum: ["1m"]
+        source:
+          type: string
+        previousClose:
+          type: number
+        asOf:
+          type: string
+          format: date-time
+        bars:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketIntradayBar"
+      required: [ticker, date, timeframe, source, previousClose, asOf, bars]
+    StockHistory:
+      type: object
+      properties:
+        symbol:
+          type: string
+        ticker:
+          type: string
+        source:
+          type: string
+        currency:
+          type: ["string", "null"]
+        range:
+          type: string
+        asOf:
+          type: string
+          format: date-time
+        quote:
+          $ref: "#/components/schemas/StockQuote"
+        bars:
+          type: array
+          items:
+            $ref: "#/components/schemas/OhlcBar"
+      required: [symbol, ticker, source, currency, range, asOf, quote, bars]
+    StockCatalog:
+      type: object
+      additionalProperties: false
+      properties:
+        asOf:
+          type: string
+          format: date
+        instruments:
+          type: array
+          items:
+            $ref: "#/components/schemas/StockCatalogInstrument"
+      required: [asOf, instruments]
+    StockCatalogInstrument:
+      type: object
+      additionalProperties: false
+      properties:
+        symbol: { type: string }
+        ticker: { type: string }
+        name: { type: string }
+        exchange:
+          type: string
+          enum: [twse, tpex]
+        exchangeName:
+          type: string
+          enum: [上市, 上櫃]
+      required: [symbol, ticker, name, exchange, exchangeName]
+    StockResearchData:
+      type: object
+      additionalProperties: false
+      properties:
+        symbol: { type: string }
+        ticker: { type: ["string", "null"] }
+        fundamentals:
+          $ref: "#/components/schemas/StockFundamentals"
+        institutional:
+          $ref: "#/components/schemas/StockInstitutional"
+      required: [symbol, ticker, fundamentals, institutional]
+    StockFundamentals:
+      type: object
+      additionalProperties: false
+      properties:
+        status: { type: string, enum: [available, unavailable] }
+        reason: { type: ["string", "null"] }
+        source: { type: ["string", "null"] }
+        filedAt: { type: ["string", "null"], format: date }
+        fiscalYear: { type: ["integer", "null"] }
+        quarter: { type: ["integer", "null"] }
+        currency: { type: string }
+        revenueThousandTwd: { type: ["number", "null"] }
+        operatingIncomeThousandTwd: { type: ["number", "null"] }
+        netIncomeThousandTwd: { type: ["number", "null"] }
+        epsTwd: { type: ["number", "null"] }
+        assetsThousandTwd: { type: ["number", "null"] }
+        liabilitiesThousandTwd: { type: ["number", "null"] }
+        equityThousandTwd: { type: ["number", "null"] }
+      required: [status, reason, source, filedAt, fiscalYear, quarter, currency, revenueThousandTwd, operatingIncomeThousandTwd, netIncomeThousandTwd, epsTwd, assetsThousandTwd, liabilitiesThousandTwd, equityThousandTwd]
+    StockInstitutional:
+      type: object
+      additionalProperties: false
+      properties:
+        status: { type: string, enum: [available, unavailable] }
+        reason: { type: ["string", "null"] }
+        source: { type: ["string", "null"] }
+        observedAt: { type: ["string", "null"], format: date }
+        foreignNetShares: { type: ["number", "null"] }
+        investmentTrustNetShares: { type: ["number", "null"] }
+        dealerNetShares: { type: ["number", "null"] }
+        totalNetShares: { type: ["number", "null"] }
+      required: [status, reason, source, observedAt, foreignNetShares, investmentTrustNetShares, dealerNetShares, totalNetShares]
+    StockQuote:
+      type: object
+      properties:
+        name:
+          type: ["string", "null"]
+        price:
+          type: ["number", "null"]
+        previousClose:
+          type: ["number", "null"]
+        change:
+          type: ["number", "null"]
+        changePercent:
+          type: ["number", "null"]
+        source:
+          type: string
+        asOf:
+          type: ["string", "null"]
+          format: date-time
+        available:
+          type: boolean
+        error:
+          type: ["string", "null"]
+      required: [name, price, previousClose, change, changePercent, source, asOf, available, error]
+    GranvilleSignal:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          enum: [buy_breakout, buy_retest, buy_false_breakdown, buy_rebound, sell_breakdown, sell_resistance, sell_false_breakout, sell_overextension]
+        direction:
+          type: string
+          enum: [buy, sell]
+        status:
+          type: string
+          enum: [candidate, contextual, not_detected, insufficient]
+        explanation:
+          type: string
+          maxLength: 180
+      required: [id, direction, status, explanation]
+    GranvilleAnalysis:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: [available, insufficient]
+        timeframe:
+          type: string
+          enum: [daily]
+        sourceDate:
+          type: ["string", "null"]
+          format: date
+        movingAveragePeriod:
+          type: integer
+          const: 20
+        latestClose:
+          type: ["number", "null"]
+        movingAverage:
+          type: ["number", "null"]
+        slopePercent5d:
+          type: ["number", "null"]
+        averageTrend:
+          type: string
+          enum: [rising, flat, falling, insufficient]
+        distancePercent:
+          type: ["number", "null"]
+        distanceAtr:
+          type: ["number", "null"]
+        signals:
+          type: array
+          minItems: 8
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/GranvilleSignal"
+        methodNote:
+          type: string
+          maxLength: 500
+      required: [status, timeframe, sourceDate, movingAveragePeriod, latestClose, movingAverage, slopePercent5d, averageTrend, distancePercent, distanceAtr, signals, methodNote]
+    StockAiDirectionValidationHorizon:
+      type: object
+      additionalProperties: false
+      properties:
+        horizonDays:
+          type: integer
+          minimum: 1
+          maximum: 5
+        forecastCount:
+          type: integer
+          minimum: 0
+        directionalForecastCount:
+          type: integer
+          minimum: 0
+        evaluatedDirectionalForecastCount:
+          type: integer
+          minimum: 0
+        correctForecastCount:
+          type: integer
+          minimum: 0
+        pendingDirectionalForecastCount:
+          type: integer
+          minimum: 0
+        neutralForecastCount:
+          type: integer
+          minimum: 0
+        insufficientForecastCount:
+          type: integer
+          minimum: 0
+        hitRatePercent:
+          type: ["number", "null"]
+          minimum: 0
+          maximum: 100
+      required: [horizonDays, forecastCount, directionalForecastCount, evaluatedDirectionalForecastCount, correctForecastCount, pendingDirectionalForecastCount, neutralForecastCount, insufficientForecastCount, hitRatePercent]
+    StockAiDirectionValidation:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: [collecting, unavailable]
+        source:
+          type: string
+        updatedAt:
+          type: ["string", "null"]
+          format: date-time
+        minimumSampleCount:
+          type: integer
+          minimum: 1
+        horizons:
+          type: array
+          minItems: 5
+          maxItems: 5
+          items:
+            $ref: "#/components/schemas/StockAiDirectionValidationHorizon"
+        message:
+          type: ["string", "null"]
+          maxLength: 240
+        methodNote:
+          type: string
+          maxLength: 600
+      required: [status, source, updatedAt, minimumSampleCount, horizons, message, methodNote]
+    StockAiAssessment:
+      type: object
+      properties:
+        symbol:
+          type: string
+        ticker:
+          type: string
+        aiProvider:
+          type: ["string", "null"]
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, null]
+        source:
+          type: string
+        quoteAsOf:
+          type: ["string", "null"]
+          format: date-time
+        referencePrice:
+          type: number
+          exclusiveMinimum: 0
+          description: Price used as the starting reference for this assessment.
+        referenceType:
+          type: string
+          enum: [verified_trade, official_daily_close]
+        analyzedAt:
+          type: string
+          format: date-time
+        horizon:
+          type: string
+        direction:
+          type: string
+          enum: [bullish, bearish, neutral, insufficient]
+        biasLevel:
+          type: string
+          enum: [strong_bearish, bearish, neutral, bullish, strong_bullish, insufficient]
+        confidence:
+          type: string
+          enum: [low, medium, high, not_applicable]
+        summary:
+          type: string
+        marketInfluence:
+          type: string
+          enum: [supportive, mixed, headwind, unavailable]
+        marketSummary:
+          type: string
+        signals:
+          type: array
+          items:
+            type: string
+        risks:
+          type: array
+          items:
+            type: string
+        webResearch:
+          type: object
+          additionalProperties: false
+          properties:
+            status:
+              type: string
+              enum: [searched, no_results, unavailable]
+            searchedAt:
+              type: ["string", "null"]
+              format: date-time
+            sources:
+              type: array
+              maxItems: 5
+              items:
+                type: object
+                additionalProperties: false
+                properties:
+                  title:
+                    type: string
+                    maxLength: 180
+                  url:
+                    type: string
+                    format: uri
+                    maxLength: 1000
+                  snippet:
+                    type: string
+                    maxLength: 500
+                required: [title, url, snippet]
+          required: [status, searchedAt, sources]
+        smcAnalysis:
+          type: object
+          additionalProperties: false
+          properties:
+            status:
+              type: string
+              enum: [available, insufficient]
+            timeframe:
+              type: string
+              enum: [daily]
+            sourceDate:
+              type: ["string", "null"]
+              format: date
+            barsUsed:
+              type: integer
+              minimum: 0
+            structure:
+              type: string
+              enum: [bullish, bearish, range, developing, insufficient]
+            swingHigh:
+              type: object
+              additionalProperties: false
+              properties:
+                price:
+                  type: ["number", "null"]
+                  exclusiveMinimum: 0
+                date:
+                  type: ["string", "null"]
+                  format: date
+              required: [price, date]
+            swingLow:
+              type: object
+              additionalProperties: false
+              properties:
+                price:
+                  type: ["number", "null"]
+                  exclusiveMinimum: 0
+                date:
+                  type: ["string", "null"]
+                  format: date
+              required: [price, date]
+            latestBreak:
+              type: object
+              additionalProperties: false
+              properties:
+                kind:
+                  type: ["string", "null"]
+                  enum: [bullish_bos, bearish_bos, bullish_choch, bearish_choch, bullish_break, bearish_break, null]
+                date:
+                  type: ["string", "null"]
+                  format: date
+                level:
+                  type: ["number", "null"]
+                  exclusiveMinimum: 0
+              required: [kind, date, level]
+            liquiditySweeps:
+              type: array
+              maxItems: 3
+              items:
+                type: object
+                additionalProperties: false
+                properties:
+                  side:
+                    type: string
+                    enum: [buy_side, sell_side]
+                  date:
+                    type: string
+                    format: date
+                  level:
+                    type: number
+                    exclusiveMinimum: 0
+                  wickExtreme:
+                    type: number
+                    exclusiveMinimum: 0
+                  close:
+                    type: number
+                    exclusiveMinimum: 0
+                required: [side, date, level, wickExtreme, close]
+            liquidityPools:
+              type: array
+              maxItems: 4
+              items:
+                type: object
+                additionalProperties: false
+                properties:
+                  side:
+                    type: string
+                    enum: [buy_side, sell_side]
+                  lower:
+                    type: number
+                    exclusiveMinimum: 0
+                  upper:
+                    type: number
+                    exclusiveMinimum: 0
+                  touches:
+                    type: integer
+                    minimum: 2
+                  firstDate:
+                    type: string
+                    format: date
+                  lastDate:
+                    type: string
+                    format: date
+                required: [side, lower, upper, touches, firstDate, lastDate]
+            candidateOrderBlocks:
+              type: array
+              maxItems: 3
+              items:
+                type: object
+                additionalProperties: false
+                properties:
+                  direction:
+                    type: string
+                    enum: [bullish, bearish]
+                  date:
+                    type: string
+                    format: date
+                  lower:
+                    type: number
+                    exclusiveMinimum: 0
+                  upper:
+                    type: number
+                    exclusiveMinimum: 0
+                  status:
+                    type: string
+                    enum: [unretested, retested]
+                  breakDate:
+                    type: string
+                    format: date
+                required: [direction, date, lower, upper, status, breakDate]
+            fairValueGaps:
+              type: array
+              maxItems: 4
+              items:
+                type: object
+                additionalProperties: false
+                properties:
+                  direction:
+                    type: string
+                    enum: [bullish, bearish]
+                  date:
+                    type: string
+                    format: date
+                  lower:
+                    type: number
+                    exclusiveMinimum: 0
+                  upper:
+                    type: number
+                    exclusiveMinimum: 0
+                  status:
+                    type: string
+                    enum: [open, partially_filled, filled]
+                required: [direction, date, lower, upper, status]
+            notes:
+              type: string
+              maxLength: 400
+          required: [status, timeframe, sourceDate, barsUsed, structure, swingHigh, swingLow, latestBreak, liquiditySweeps, liquidityPools, candidateOrderBlocks, fairValueGaps, notes]
+        granvilleAnalysis:
+          $ref: "#/components/schemas/GranvilleAnalysis"
+        action:
+          type: string
+          enum: [buy, hold, sell, wait, insufficient]
+        actionText:
+          type: string
+        actionReferencePrice:
+          type: ["number", "null"]
+        actionReferenceLabel:
+          type: ["string", "null"]
+        actionReferenceReason:
+          type: ["string", "null"]
+        pricePlanStatus:
+          type: string
+          enum: [available, not_applicable, rejected]
+        entryPrice:
+          type: ["number", "null"]
+        entryReason:
+          type: ["string", "null"]
+        stopLossPrice:
+          type: ["number", "null"]
+        stopLossReason:
+          type: ["string", "null"]
+        takeProfitPrice:
+          type: ["number", "null"]
+        takeProfitReason:
+          type: ["string", "null"]
+        pricePlanMessage:
+          type: string
+        forecastLowPrice:
+          type: ["number", "null"]
+        forecastPrice:
+          type: ["number", "null"]
+        forecastHighPrice:
+          type: ["number", "null"]
+        forecastReason:
+          type: string
+          maxLength: 180
+        forecastPath:
+          type: array
+          minItems: 0
+          maxItems: 5
+          description: AI-estimated low, central, and high scenario values for each of the next five trading days.
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              day:
+                type: integer
+                minimum: 1
+                maximum: 5
+              lowPrice:
+                type: number
+                exclusiveMinimum: 0
+              centralPrice:
+                type: number
+                exclusiveMinimum: 0
+              highPrice:
+                type: number
+                exclusiveMinimum: 0
+            required: [day, lowPrice, centralPrice, highPrice]
+        historicalStrategyBacktest:
+          type: object
+          additionalProperties: false
+          description: A fixed, reproducible strategy backtest kept separate from AI confidence and recommendations.
+          properties:
+            status:
+              type: string
+              enum: [calibrated, insufficient_data]
+            sampleCount:
+              type: integer
+              minimum: 0
+            wins:
+              type: ["integer", "null"]
+              minimum: 0
+            winRatePercent:
+              type: ["number", "null"]
+              minimum: 0
+              maximum: 100
+            confidenceIntervalLowPercent:
+              type: ["number", "null"]
+              minimum: 0
+              maximum: 100
+            confidenceIntervalHighPercent:
+              type: ["number", "null"]
+              minimum: 0
+              maximum: 100
+            dataStartDate:
+              type: ["string", "null"]
+              format: date
+            dataEndDate:
+              type: ["string", "null"]
+              format: date
+            minimumSampleCount:
+              type: integer
+              minimum: 1
+            minimumDataWindowDays:
+              type: integer
+              minimum: 1
+            evaluationTradingDays:
+              type: integer
+              minimum: 1
+            source:
+              type: string
+          required: [status, sampleCount, wins, winRatePercent, confidenceIntervalLowPercent, confidenceIntervalHighPercent, dataStartDate, dataEndDate, minimumSampleCount, minimumDataWindowDays, evaluationTradingDays, source]
+        forwardDirectionValidation:
+          $ref: "#/components/schemas/StockAiDirectionValidation"
+        disclaimer:
+          type: string
+      required: [symbol, ticker, aiProvider, source, quoteAsOf, referencePrice, referenceType, analyzedAt, horizon, direction, biasLevel, confidence, summary, marketInfluence, marketSummary, signals, risks, webResearch, smcAnalysis, granvilleAnalysis, action, actionText, actionReferencePrice, actionReferenceLabel, actionReferenceReason, pricePlanStatus, entryPrice, entryReason, stopLossPrice, stopLossReason, takeProfitPrice, takeProfitReason, pricePlanMessage, forecastLowPrice, forecastPrice, forecastHighPrice, forecastReason, forecastPath, historicalStrategyBacktest, forwardDirectionValidation, disclaimer]
+    StockAiBuyPriceInput:
+      type: object
+      additionalProperties: false
+      properties:
+        symbol:
+          type: string
+          pattern: "^[A-Za-z0-9]{4,6}(\\.(TW|TWO))?$"
+        plannedBuyPrice:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 1000000
+      required: [symbol, plannedBuyPrice]
+    StockAiBuyPriceVerdict:
+      type: object
+      additionalProperties: false
+      properties:
+        symbol:
+          type: string
+        ticker:
+          type: string
+        plannedBuyPrice:
+          type: number
+        currentPrice:
+          type: number
+        quoteAsOf:
+          type: string
+          format: date-time
+        analysisAsOf:
+          type: string
+          format: date-time
+        aiProvider:
+          type: string
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini]
+        verdict:
+          type: string
+          enum: [buy, do_not_buy]
+        reason:
+          type: string
+          maxLength: 180
+        analyzedAt:
+          type: string
+          format: date-time
+        disclaimer:
+          type: string
+      required: [symbol, ticker, plannedBuyPrice, currentPrice, quoteAsOf, analysisAsOf, aiProvider, verdict, reason, analyzedAt, disclaimer]
+    StockAiAssistantQuestion:
+      type: object
+      additionalProperties: false
+      properties:
+        symbol:
+          type: string
+          pattern: "^[A-Za-z0-9]{4,6}(\\.(TW|TWO))?$"
+        question:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        history:
+          type: array
+          maxItems: 6
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              role:
+                type: string
+                enum: [user, assistant]
+              content:
+                type: string
+                minLength: 1
+                maxLength: 1000
+            required: [role, content]
+      required: [symbol, question]
+    StockAiAssistantReply:
+      type: object
+      additionalProperties: false
+      properties:
+        symbol:
+          type: string
+        ticker:
+          type: string
+        aiProvider:
+          type: string
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini]
+        answer:
+          type: string
+          maxLength: 1600
+        citedFacts:
+          type: array
+          maxItems: 5
+          items:
+            type: string
+            maxLength: 180
+        context:
+          type: object
+          additionalProperties: false
+          properties:
+            quoteAsOf:
+              type: ["string", "null"]
+              format: date-time
+            analysisAsOf:
+              type: ["string", "null"]
+              format: date-time
+            marketAsOf:
+              type: ["string", "null"]
+              format: date-time
+            sources:
+              type: array
+              maxItems: 5
+              items:
+                type: string
+            coverage:
+              type: object
+              additionalProperties: false
+              properties:
+                technical:
+                  type: string
+                  enum: [available, unavailable]
+                market:
+                  type: string
+                  enum: [available, unavailable]
+                fundamentals:
+                  type: string
+                  enum: [available, unavailable]
+                institutional:
+                  type: string
+                  enum: [available, unavailable]
+              required: [technical, market, fundamentals, institutional]
+          required: [quoteAsOf, analysisAsOf, marketAsOf, sources, coverage]
+        answeredAt:
+          type: string
+          format: date-time
+        disclaimer:
+          type: string
+      required: [symbol, ticker, answer, aiProvider, citedFacts, context, answeredAt, disclaimer]
+    AssistantChatRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        symbol:
+          type: string
+          pattern: "^[A-Za-z0-9]{4,6}(\\.(TW|TWO))?$"
+        question:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        history:
+          type: array
+          maxItems: 6
+          items:
+            $ref: "#/components/schemas/AssistantChatHistoryItem"
+      required: [question]
+    AssistantChatHistoryItem:
+      type: object
+      additionalProperties: false
+      properties:
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+          minLength: 1
+          maxLength: 1000
+      required: [role, content]
+    AssistantChatSource:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 180
+        url:
+          type: string
+          format: uri
+          maxLength: 1000
+      required: [title, url]
+    AssistantChatReply:
+      type: object
+      additionalProperties: false
+      properties:
+        answer:
+          type: string
+          minLength: 1
+          maxLength: 420
+        aiProvider:
+          type: string
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, rule_based]
+        searchStatus:
+          type: string
+          enum: [searched, not_needed, unavailable]
+        sources:
+          type: array
+          maxItems: 5
+          items:
+            $ref: "#/components/schemas/AssistantChatSource"
+        answeredAt:
+          type: string
+          format: date-time
+      required: [answer, aiProvider, searchStatus, sources, answeredAt]
+    StockAiAssistantContext:
+      type: object
+      additionalProperties: false
+      properties:
+        quoteAsOf:
+          type: ["string", "null"]
+          format: date-time
+        analysisAsOf:
+          type: ["string", "null"]
+          format: date-time
+        marketAsOf:
+          type: ["string", "null"]
+          format: date-time
+        sources:
+          type: array
+          maxItems: 5
+          items:
+            type: string
+        coverage:
+          type: object
+          additionalProperties: false
+          properties:
+            technical:
+              type: string
+              enum: [available, unavailable]
+            market:
+              type: string
+              enum: [available, unavailable]
+            fundamentals:
+              type: string
+              enum: [available, unavailable]
+            institutional:
+              type: string
+              enum: [available, unavailable]
+          required: [technical, market, fundamentals, institutional]
+      required: [quoteAsOf, analysisAsOf, marketAsOf, sources, coverage]
+    StockAiConversationMessage:
+      type: object
+      additionalProperties: false
+      properties:
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+          minLength: 1
+          maxLength: 1800
+        aiProvider:
+          type: string
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, rule_based]
+        citedFacts:
+          type: array
+          maxItems: 5
+          items:
+            type: string
+            maxLength: 180
+        sources:
+          type: array
+          maxItems: 5
+          items:
+            $ref: "#/components/schemas/AssistantChatSource"
+        searchStatus:
+          type: string
+          enum: [searched, not_needed, unavailable]
+        context:
+          $ref: "#/components/schemas/StockAiAssistantContext"
+        disclaimer:
+          type: string
+          maxLength: 220
+      required: [role, content]
+    StockAiConversation:
+      type: object
+      additionalProperties: false
+      properties:
+        symbol:
+          type: string
+          pattern: "^[A-Z0-9]{4,6}(\\.(TW|TWO))?$"
+        messages:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/StockAiConversationMessage"
+      required: [symbol, messages]
+    StockAiConversationUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        symbol:
+          type: string
+          pattern: "^[A-Za-z0-9]{4,6}(\\.(TW|TWO))?$"
+        messages:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/StockAiConversationMessage"
+      required: [symbol, messages]
+    WatchlistEntry:
+      type: object
+      additionalProperties: false
+      properties:
+        symbol:
+          type: string
+          minLength: 2
+          maxLength: 12
+          pattern: "^[A-Z0-9]{2,6}(\\.(TW|TWO))?$"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 60
+      required: [symbol, name]
+    LinePriceAlert:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        symbol:
+          type: string
+          pattern: "^[A-Z0-9]{2,6}(\\.(TW|TWO))?$"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 60
+        condition:
+          type: string
+          enum: [above, below]
+        targetPrice:
+          type: number
+          exclusiveMinimum: 0
+        enabled:
+          type: boolean
+      required: [id, symbol, name, condition, targetPrice, enabled]
+    LineNotifications:
+      type: object
+      additionalProperties: false
+      properties:
+        linked:
+          type: boolean
+        alerts:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/LinePriceAlert"
+        openingNotice:
+          type: boolean
+        closingSummary:
+          type: boolean
+        premarketSummary:
+          type: boolean
+      required: [linked, alerts, openingNotice, closingSummary, premarketSummary]
+    LineNotificationsUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        alerts:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/LinePriceAlert"
+        openingNotice:
+          type: boolean
+        closingSummary:
+          type: boolean
+        premarketSummary:
+          type: boolean
+      required: [alerts, openingNotice, closingSummary, premarketSummary]
+    LineLinkCode:
+      type: object
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+      required: [code, expiresAt]
+    WatchlistUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        watchlist:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/WatchlistEntry"
+      required: [watchlist]
+    AccountProfile:
+      type: object
+      additionalProperties: false
+      properties:
+        userId:
+          type: string
+        email:
+          type: string
+          format: email
+        isAdmin:
+          type: boolean
+        watchlist:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/WatchlistEntry"
+        maxWatchlistItems:
+          type: integer
+      required: [userId, email, isAdmin, watchlist, maxWatchlistItems]
+    AdminUser:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        email:
+          type: ["string", "null"]
+          format: email
+        fullName:
+          type: ["string", "null"]
+        role:
+          type: string
+          enum: [admin, member]
+        appAccess:
+          type: string
+          enum: [active, not_invited]
+          description: Whether the account is authorized to use this application.
+        banned:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        lastSignInAt:
+          type: ["string", "null"]
+          format: date-time
+      required: [id, email, fullName, role, appAccess, banned, createdAt, lastSignInAt]
+    AdminUserList:
+      type: object
+      additionalProperties: false
+      properties:
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminUser"
+        totalCount:
+          type: integer
+      required: [users, totalCount]
+    AdminWebSearchDiagnostic:
+      type: object
+      additionalProperties: false
+      properties:
+        provider:
+          type: string
+          enum: [duckduckgo, brave, searxng]
+        outcome:
+          type: string
+          enum: [searched, empty, failed]
+        resultCount:
+          type: integer
+          minimum: 0
+        failureKind:
+          type: ["string", "null"]
+          enum: [configuration_error, http_error, timeout, network_error, null]
+        httpStatus:
+          type: ["integer", "null"]
+          minimum: 100
+          maximum: 599
+        checkedAt:
+          type: string
+          format: date-time
+      required: [provider, outcome, resultCount, failureKind, httpStatus, checkedAt]
+    InviteUserInput:
+      type: object
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+      required: [email]
+    InvitationSummary:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        invitationUrl:
+          type: ["string", "null"]
+          format: uri
+      required: [id, email, status, createdAt, invitationUrl]
+    AdminUserUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        role:
+          type: string
+          enum: [admin, member]
+        banned:
+          type: boolean
+    QuantResearchInput:
+      type: object
+      additionalProperties: false
+      properties:
+        hypothesis:
+          type: string
+          minLength: 8
+          maxLength: 600
+        tickerFilter:
+          type: string
+          minLength: 4
+          maxLength: 10
+          pattern: '^[0-9]{4,6}(\.(TW|TWO))?$'
+        rangeMonths:
+          type: integer
+          enum: [3, 6, 12]
+          default: 6
+        startingCapital:
+          type: number
+          minimum: 100000
+          maximum: 100000000
+        topN:
+          type: integer
+          minimum: 3
+          maximum: 30
+          default: 10
+        rebalance:
+          type: string
+          enum: [weekly, monthly]
+          default: monthly
+      required: [hypothesis, rangeMonths, startingCapital, topN, rebalance]
+    QuantResearchInterpretation:
+      type: object
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+          enum: [signal, recurring_cash]
+        tickerFilter:
+          type: ["string", "null"]
+          minLength: 4
+          maxLength: 10
+          pattern: '^[0-9]{4,6}(\.(TW|TWO))?$'
+        weekday:
+          type: ["string", "null"]
+          enum: [monday, tuesday, wednesday, thursday, friday, first_trading_day, null]
+        amountPerEntry:
+          type: ["number", "null"]
+          minimum: 1
+          maximum: 100000000
+        totalContributionLimit:
+          type: ["number", "null"]
+          minimum: 1
+          maximum: 100000000
+        strategy:
+          $ref: "#/components/schemas/QuantStrategy"
+        aiProvider:
+          type: string
+          enum: [gemini, 1min_ai, agnes_ai, groq, ollama, openrouter, openai]
+        summary:
+          type: string
+          minLength: 8
+          maxLength: 400
+      required: [mode, tickerFilter, weekday, amountPerEntry, totalContributionLimit, strategy, summary]
+    QuantResearchExecutionInput:
+      type: object
+      additionalProperties: false
+      properties:
+        hypothesis:
+          type: string
+          minLength: 8
+          maxLength: 600
+        tickerFilter:
+          type: string
+          minLength: 4
+          maxLength: 10
+          pattern: '^[0-9]{4,6}(\.(TW|TWO))?$'
+        rangeMonths:
+          type: integer
+          enum: [3, 6, 12]
+          default: 6
+        startingCapital:
+          type: number
+          minimum: 100000
+          maximum: 100000000
+        topN:
+          type: integer
+          minimum: 3
+          maximum: 30
+          default: 10
+        rebalance:
+          type: string
+          enum: [weekly, monthly]
+          default: monthly
+        interpretation:
+          $ref: "#/components/schemas/QuantResearchInterpretation"
+      required: [hypothesis, rangeMonths, startingCapital, topN, rebalance, interpretation]
+    QuantFactorWeights:
+      type: object
+      additionalProperties: false
+      properties:
+        momentum20:
+          type: number
+          minimum: 0
+          maximum: 1
+        momentum60:
+          type: number
+          minimum: 0
+          maximum: 1
+        liquidity20:
+          type: number
+          minimum: 0
+          maximum: 1
+        lowVolatility20:
+          type: number
+          minimum: 0
+          maximum: 1
+      required: [momentum20, momentum60, liquidity20, lowVolatility20]
+    QuantSignalCondition:
+      type: object
+      additionalProperties: false
+      properties:
+        factor:
+          type: string
+          enum: [momentum20, momentum60, liquidity20, volatility20]
+        operator:
+          type: string
+          enum: [gte, lte]
+        threshold:
+          type: number
+          minimum: -0.99
+          maximum: 1000000000000
+      required: [factor, operator, threshold]
+    QuantSignalRule:
+      type: object
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+          enum: [all, any]
+        conditions:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items:
+            $ref: "#/components/schemas/QuantSignalCondition"
+      required: [mode, conditions]
+    QuantStrategy:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          maxLength: 60
+        rationale:
+          type: string
+          maxLength: 300
+        factorWeights:
+          $ref: "#/components/schemas/QuantFactorWeights"
+        entryRule:
+          description: AI-generated entry conditions evaluated on each scheduled signal date. Omitted only for older saved runs.
+          $ref: "#/components/schemas/QuantSignalRule"
+        exitRule:
+          description: AI-generated exit conditions evaluated on each scheduled signal date. Omitted only for older saved runs.
+          $ref: "#/components/schemas/QuantSignalRule"
+        positionSizing:
+          description: AI-parsed position sizing; omitted only for older saved runs.
+          $ref: "#/components/schemas/QuantPositionSizing"
+      required: [name, rationale, factorWeights]
+    QuantPositionSizing:
+      type: object
+      additionalProperties: false
+      properties:
+        mode: { type: string, enum: [portfolio, fixed_shares, fixed_cash] }
+        sharesPerEntry: { type: ["integer", "null"], minimum: 1, maximum: 100000 }
+        frequency: { type: string, enum: [daily, weekly, monthly] }
+        amountPerEntry: { type: ["number", "null"], minimum: 1 }
+        weekday: { type: ["string", "null"], enum: [monday, tuesday, wednesday, thursday, friday, null] }
+      required: [mode, sharesPerEntry, frequency]
+    QuantBacktestMetrics:
+      type: object
+      additionalProperties: false
+      properties:
+        totalReturnPercent: { type: number }
+        annualizedReturnPercent: { type: number }
+        maxDrawdownPercent: { type: number }
+        annualizedVolatilityPercent: { type: number }
+        sharpeRatio: { type: number }
+        tradeCount: { type: integer }
+        closedTradeCount: { type: integer }
+        winningTradeCount: { type: integer }
+        winRatePercent: { type: ["number", "null"] }
+        averageWinPercent: { type: ["number", "null"] }
+        averageLossPercent: { type: ["number", "null"] }
+        payoffRatio: { type: ["number", "null"] }
+        finalEquity: { type: number }
+        contributedCapital: { type: number }
+        taiexReturnPercent: { type: number }
+      required: [totalReturnPercent, annualizedReturnPercent, maxDrawdownPercent, annualizedVolatilityPercent, sharpeRatio, tradeCount, finalEquity, taiexReturnPercent]
+    QuantTimingCandidateResult:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string }
+        closedTradeCount: { type: integer }
+        winRatePercent: { type: ["number", "null"] }
+        totalReturnPercent: { type: number }
+        selected: { type: boolean }
+      required: [name, closedTradeCount, winRatePercent, totalReturnPercent, selected]
+    QuantTimingComparison:
+      type: object
+      additionalProperties: false
+      properties:
+        calibrationStartDate: { type: string, format: date }
+        calibrationEndDate: { type: string, format: date }
+        validationStartDate: { type: string, format: date }
+        validationEndDate: { type: string, format: date }
+        selectedCandidate: { type: string }
+        calibrationCandidates:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items: { $ref: "#/components/schemas/QuantTimingCandidateResult" }
+        validation:
+          type: object
+          additionalProperties: false
+          properties:
+            closedTradeCount: { type: integer }
+            winRatePercent: { type: ["number", "null"] }
+            totalReturnPercent: { type: number }
+            maxDrawdownPercent: { type: number }
+          required: [closedTradeCount, winRatePercent, totalReturnPercent, maxDrawdownPercent]
+      required: [calibrationStartDate, calibrationEndDate, validationStartDate, validationEndDate, selectedCandidate, calibrationCandidates, validation]
+    QuantEquityPoint:
+      type: object
+      additionalProperties: false
+      properties:
+        date: { type: string, format: date }
+        equity: { type: number }
+        taiexEquity: { type: number }
+      required: [date, equity, taiexEquity]
+    QuantTrade:
+      type: object
+      additionalProperties: false
+      properties:
+        date: { type: string, format: date }
+        ticker: { type: string }
+        name: { type: string }
+        side: { type: string, enum: [buy, sell] }
+        shares: { type: integer }
+        price: { type: number }
+        commission: { type: number }
+        transactionTax: { type: number }
+        slippageCost: { type: number }
+      required: [date, ticker, name, side, shares, price, commission, transactionTax]
+    QuantCostStress:
+      type: object
+      additionalProperties: false
+      properties:
+        slippagePercentPerSide: { type: number }
+        costMultiplier: { type: number }
+        totalReturnPercent: { type: number }
+        maxDrawdownPercent: { type: number }
+        closedTradeCount: { type: integer }
+        winRatePercent: { type: ["number", "null"] }
+        averageWinPercent: { type: ["number", "null"] }
+        averageLossPercent: { type: ["number", "null"] }
+        payoffRatio: { type: ["number", "null"] }
+      required: [slippagePercentPerSide, costMultiplier, totalReturnPercent, maxDrawdownPercent, closedTradeCount, winRatePercent, averageWinPercent, averageLossPercent, payoffRatio]
+    QuantDataCoverage:
+      type: object
+      additionalProperties: false
+      properties:
+        requestedStartDate: { type: string, format: date }
+        dataStartDate: { type: string, format: date }
+        dataEndDate: { type: string, format: date }
+        tradingDays: { type: integer }
+        eligibleSecurities: { type: integer }
+        twseRows: { type: integer }
+        tpexRows: { type: integer }
+        fetchedDays: { type: integer }
+        cachedDays: { type: integer }
+        dataFingerprint: { type: string }
+        source: { type: string }
+      required: [requestedStartDate, dataStartDate, dataEndDate, tradingDays, eligibleSecurities, twseRows, tpexRows, fetchedDays, cachedDays, dataFingerprint, source]
+    QuantResearchResult:
+      type: object
+      additionalProperties: false
+      properties:
+        runId: { type: integer }
+        hypothesis: { type: string }
+        tickerFilter:
+          type: ["string", "null"]
+          minLength: 4
+          maxLength: 10
+          pattern: '^[0-9]{4,6}(\.(TW|TWO))?$'
+        rangeMonths: { type: integer, enum: [3, 6, 12] }
+        startingCapital: { type: number }
+        topN: { type: integer }
+        rebalance: { type: string, enum: [daily, weekly, monthly] }
+        timingComparison:
+          $ref: "#/components/schemas/QuantTimingComparison"
+        costStress:
+          $ref: "#/components/schemas/QuantCostStress"
+        strategy:
+          $ref: "#/components/schemas/QuantStrategy"
+        metrics:
+          $ref: "#/components/schemas/QuantBacktestMetrics"
+        equityCurve:
+          type: array
+          maxItems: 400
+          items:
+            $ref: "#/components/schemas/QuantEquityPoint"
+        trades:
+          type: array
+          maxItems: 300
+          items:
+            $ref: "#/components/schemas/QuantTrade"
+        tradeLogTruncated: { type: boolean }
+        aiSummary:
+          type: ["string", "null"]
+          maxLength: 240
+        coverage:
+          $ref: "#/components/schemas/QuantDataCoverage"
+        aiProvider:
+          type: string
+          # OpenRouter remains for historical saved runs; Groq Free joins new quant runs.
+          enum: [gemini, 1min_ai, agnes_ai, groq, ollama, openrouter]
+        createdAt:
+          type: string
+          format: date-time
+        disclaimer:
+          type: string
+          maxLength: 500
+      required: [runId, hypothesis, rangeMonths, startingCapital, topN, rebalance, strategy, metrics, equityCurve, trades, tradeLogTruncated, coverage, aiProvider, createdAt, disclaimer]
+    QuantResearchRunSummaryResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        aiSummary: { type: string, minLength: 15, maxLength: 240 }
+      required: [aiSummary]
+    QuantResearchProgressEvent:
+      type: object
+      additionalProperties: false
+      properties:
+        type: { type: string, enum: [progress] }
+        stage: { type: string, enum: [strategy, market-data, backtest, summary, saving] }
+        message: { type: string }
+        current: { type: integer, minimum: 0 }
+        total: { type: integer, minimum: 0 }
+      required: [type, stage, message]
+    QuantResearchResultEvent:
+      type: object
+      additionalProperties: false
+      properties:
+        type: { type: string, enum: [result] }
+        result:
+          $ref: "#/components/schemas/QuantResearchResult"
+      required: [type, result]
+    QuantResearchErrorEvent:
+      type: object
+      additionalProperties: false
+      properties:
+        type: { type: string, enum: [error] }
+        message: { type: string }
+      required: [type, message]
+    QuantResearchStreamEvent:
+      oneOf:
+        - $ref: "#/components/schemas/QuantResearchProgressEvent"
+        - $ref: "#/components/schemas/QuantResearchResultEvent"
+        - $ref: "#/components/schemas/QuantResearchErrorEvent"
+    QuantResearchRunSummary:
+      type: object
+      additionalProperties: false
+      properties:
+        runId: { type: integer }
+        hypothesis: { type: string }
+        createdAt: { type: string, format: date-time }
+        totalReturnPercent: { type: number }
+        dataStartDate: { type: string, format: date }
+        dataEndDate: { type: string, format: date }
+      required: [runId, hypothesis, createdAt, totalReturnPercent, dataStartDate, dataEndDate]
+    QuantResearchRunList:
+      type: object
+      additionalProperties: false
+      properties:
+        runs:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/QuantResearchRunSummary"
+      required: [runs]
+    PaperTradingAccountInput:
+      type: object
+      additionalProperties: false
+      properties:
+        startingCash:
+          type: number
+          minimum: 100000
+          maximum: 100000000
+      required: [startingCash]
+    PaperTradeInput:
+      type: object
+      additionalProperties: false
+      properties:
+        ticker:
+          type: string
+          pattern: "^[A-Za-z0-9]{4,6}\\.(TW|TWO)$"
+        side:
+          type: string
+          enum: [buy, sell]
+        shares:
+          type: integer
+          minimum: 1
+          maximum: 10000000
+        price:
+          type: number
+          minimum: 0.01
+          maximum: 1000000
+      required: [ticker, side, shares, price]
+    PaperTradingPosition:
+      type: object
+      additionalProperties: false
+      properties:
+        ticker: { type: string }
+        name: { type: string }
+        shares: { type: integer }
+        averageCost: { type: number }
+        latestClose: { type: ["number", "null"] }
+        marketValue: { type: ["number", "null"] }
+        unrealizedPnl: { type: ["number", "null"] }
+      required: [ticker, name, shares, averageCost, latestClose, marketValue, unrealizedPnl]
+    PaperTradingTrade:
+      type: object
+      additionalProperties: false
+      properties:
+        id: { type: integer }
+        ticker: { type: string }
+        name: { type: string }
+        side: { type: string, enum: [buy, sell] }
+        shares: { type: integer }
+        price: { type: number }
+        grossAmount: { type: number }
+        commission: { type: number }
+        transactionTax: { type: number }
+        realizedPnl: { type: number }
+        tradingDate: { type: string, format: date }
+        createdAt: { type: string, format: date-time }
+      required: [id, ticker, name, side, shares, price, grossAmount, commission, transactionTax, realizedPnl, tradingDate, createdAt]
+    PaperTradingPortfolio:
+      type: object
+      additionalProperties: false
+      properties:
+        initialized: { type: boolean }
+        startingCash: { type: ["number", "null"] }
+        cash: { type: ["number", "null"] }
+        marketValue: { type: ["number", "null"] }
+        equity: { type: ["number", "null"] }
+        returnPercent: { type: ["number", "null"] }
+        asOf: { type: ["string", "null"], format: date }
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaperTradingPosition"
+        trades:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/PaperTradingTrade"
+        disclaimer: { type: string }
+      required: [initialized, startingCash, cash, marketValue, equity, returnPercent, asOf, positions, trades, disclaimer]

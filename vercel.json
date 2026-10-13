@@ -1,0 +1,28 @@
+{
+  "buildCommand": "pnpm --filter @workspace/api-server run build && pnpm --filter @workspace/tw-stock-dashboard run build",
+  "outputDirectory": "artifacts/tw-stock-dashboard/dist/public",
+  "rewrites": [
+    {
+      "source": "/api/line/webhook",
+      "destination": "/api/account/line-webhook"
+    },
+    {
+      "source": "/api/account/line-notifications/link-code",
+      "destination": "/api/account/line-notifications-link-code"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/market/line-closing-summary",
+      "schedule": "0 7 * * 1-5"
+    },
+    {
+      "path": "/api/market/line-premarket-summary",
+      "schedule": "30 0 * * 1-5"
+    }
+  ]
+}

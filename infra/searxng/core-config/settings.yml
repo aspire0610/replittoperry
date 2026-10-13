@@ -1,0 +1,12 @@
+use_default_settings: true
+
+search:
+  formats:
+    - html
+    - json
+
+server:
+  limiter: true
+
+valkey:
+  url: valkey://valkey:6379/0

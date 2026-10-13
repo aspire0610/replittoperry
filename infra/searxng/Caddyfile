@@ -1,0 +1,7 @@
+:80 {
+  basic_auth {
+    {$SEARXNG_AUTH_USERNAME} {$SEARXNG_AUTH_PASSWORD_HASH}
+  }
+
+  reverse_proxy searxng:8080
+}

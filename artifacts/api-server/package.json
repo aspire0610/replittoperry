@@ -1,0 +1,48 @@
+{
+  "name": "@workspace/api-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "export NODE_ENV=development && pnpm run build && pnpm run start",
+    "build": "node ./build.mjs",
+    "start": "node --enable-source-maps ./dist/index.mjs",
+    "start:line-worker": "node --enable-source-maps ./dist/line-notification-worker.mjs",
+    "line-worker": "pnpm run build && pnpm run start:line-worker",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:smc": "node --experimental-strip-types --test src/lib/smc-analysis.test.mjs",
+    "test:backtest": "node --experimental-strip-types --test src/lib/historical-buy-backtest.test.mjs",
+    "test:quant-research": "pnpm exec esbuild src/lib/quant-research.test.mjs --bundle --platform=node --format=esm --packages=external --outfile=/tmp/quant-research.test.mjs && node --test /tmp/quant-research.test.mjs",
+    "test:assistant-chat": "node --experimental-strip-types --test src/lib/assistant-chat.test.mjs",
+    "test:web-search": "pnpm exec esbuild src/lib/brave-search.test.mjs src/lib/searxng-search.test.mjs src/lib/google-news-rss.test.mjs src/lib/line-web-search.test.mjs --bundle --platform=node --format=esm --packages=external --outdir=/tmp/tw-stock-web-search-tests && node --test /tmp/tw-stock-web-search-tests/brave-search.test.js /tmp/tw-stock-web-search-tests/searxng-search.test.js /tmp/tw-stock-web-search-tests/google-news-rss.test.js /tmp/tw-stock-web-search-tests/line-web-search.test.js",
+    "test:assistant-actions": "node --experimental-strip-types --test src/lib/stock-ai-assistant-actions.test.mjs",
+    "test:stock-ai-direction-validation": "node --experimental-strip-types --test src/lib/stock-ai-direction-validation-utils.test.mjs",
+    "test:futures-strategy-guards": "node --experimental-strip-types --test src/lib/futures-ai-day-strategy-guards.test.mjs",
+    "test:buy-price-reason": "node --experimental-strip-types --test src/lib/stock-ai-buy-price-reason.test.mjs",
+    "test:stock-quote-policy": "node --experimental-strip-types --test src/lib/stock-ai-quote-policy.test.mjs",
+    "test:taiex-intraday": "node --experimental-strip-types --test src/lib/fugle-market-data-intraday.test.mjs",
+    "test:ai-fallback": "pnpm run build && pnpm exec esbuild src/lib/ai-provider-fallback.test.mjs --bundle --platform=node --format=esm --packages=external --outfile=dist/ai-provider-fallback.test.mjs && node --test dist/ai-provider-fallback.test.mjs"
+  },
+  "dependencies": {
+    "@clerk/express": "^2.1.75",
+    "@workspace/api-zod": "workspace:*",
+    "@workspace/db": "workspace:*",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "drizzle-orm": "catalog:",
+    "express": "^5.2.1",
+    "openai": "4.104.0",
+    "pino": "^9.14.0",
+    "pino-http": "^10.5.0"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.10",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "catalog:",
+    "esbuild": "0.28.2",
+    "esbuild-plugin-pino": "^2.3.3",
+    "pino-pretty": "^13.1.3",
+    "thread-stream": "3.1.0"
+  }
+}
