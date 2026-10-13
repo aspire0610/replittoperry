@@ -1,10 +1,11 @@
 name: LINE scheduled summaries
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: "30 0 * * 1-5"
     - cron: "0 7 * * 1-5"
-
+    
 permissions: {}
 
 concurrency:
@@ -15,10 +16,10 @@ jobs:
   send-summary:
     runs-on: ubuntu-latest
     timeout-minutes: 6
-    env:
+        env:
       CRON_SECRET: ${{ secrets.CRON_SECRET }}
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-      SCHEDULE: ${{ github.event.schedule }}
+      SCHEDULE: ${{ github.event.schedule || '0 7 * * 1-5' }}
     steps:
       - name: Call the matching protected Vercel route
         shell: bash
