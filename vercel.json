@@ -14,15 +14,5 @@
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
-  ],
-  "crons": [
-    {
-      "path": "/api/market/line-closing-summary",
-      "schedule": "0 7 * * 1-5"
-    },
-    {
-      "path": "/api/market/line-premarket-summary",
-      "schedule": "30 0 * * 1-5"
-    }
   ]
 }
