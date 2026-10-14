@@ -72,6 +72,19 @@ jobs:
             "https://tw-stock-dashboard-smoky.vercel.app${path}")"
 
           if [[ ! "$status" =~ ^2[0-9][0-9]$ ]]; then
+            python - "$response_file" <<'PY'
+          import json
+          import sys
+
+          try:
+              with open(sys.argv[1], encoding="utf-8") as f:
+                  data = json.load(f)
+              fields = ("date", "reason", "error", "sent", "skipped", "failed")
+              safe = {key: data[key] for key in fields if key in data}
+              print("Vercel route response: " + json.dumps(safe, ensure_ascii=False)[:800])
+          except (OSError, json.JSONDecodeError):
+              print("Vercel route returned a non-JSON error response.")
+          PY
             echo "::error::Vercel summary route returned HTTP $status."
             exit 1
           fi
