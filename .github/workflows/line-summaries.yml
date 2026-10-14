@@ -2,6 +2,15 @@ name: LINE scheduled summaries
 
 on:
   workflow_dispatch:
+    inputs:
+      summary:
+        description: Which summary to send manually
+        type: choice
+        options:
+          - premarket
+          - closing
+        default: closing
+        required: true
   schedule:
     - cron: "30 0 * * 1-5"
     - cron: "0 7 * * 1-5"
@@ -9,7 +18,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: line-summaries-${{ github.event.schedule }}
+  group: line-summaries-${{ github.event.schedule || (inputs.summary == 'premarket' && '30 0 * * 1-5' || '0 7 * * 1-5') }}
   cancel-in-progress: false
 
 jobs:
@@ -19,7 +28,7 @@ jobs:
     env:
       CRON_SECRET: ${{ secrets.CRON_SECRET }}
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-      SCHEDULE: ${{ github.event.schedule || '0 7 * * 1-5' }}
+      SCHEDULE: ${{ github.event.schedule || (inputs.summary == 'premarket' && '30 0 * * 1-5' || '0 7 * * 1-5') }}
     steps:
       - name: Call the matching protected Vercel route
         shell: bash
