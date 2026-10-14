@@ -80,7 +80,7 @@ jobs:
           try:
               with open(sys.argv[1], encoding="utf-8") as f:
                   data = json.load(f)
-              fields = ("date", "reason", "error", "stage", "sent", "skipped", "failed")
+              fields = ("date", "reason", "error", "stage", "diagnostic", "sent", "skipped", "failed")
               safe = {key: data[key] for key in fields if key in data}
               print("Vercel route response: " + json.dumps(safe, ensure_ascii=False)[:800])
           except (OSError, json.JSONDecodeError):
