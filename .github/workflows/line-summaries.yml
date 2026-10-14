@@ -13,12 +13,13 @@ on:
         required: true
   schedule:
     - cron: "30 0 * * 1-5"
+    - cron: "45 0 * * 1-5"
     - cron: "0 7 * * 1-5"
     
 permissions: {}
 
 concurrency:
-  group: line-summaries-${{ github.event.schedule || (inputs.summary == 'premarket' && '30 0 * * 1-5' || '0 7 * * 1-5') }}
+  group: line-summaries-${{ (github.event.schedule == '30 0 * * 1-5' || github.event.schedule == '45 0 * * 1-5' || inputs.summary == 'premarket') && 'premarket' || 'closing' }}
   cancel-in-progress: false
 
 jobs:
@@ -41,7 +42,7 @@ jobs:
           fi
 
           case "$SCHEDULE" in
-            "30 0 * * 1-5")
+            "30 0 * * 1-5"|"45 0 * * 1-5")
               path="/api/market/line-premarket-summary"
               ;;
             "0 7 * * 1-5")
