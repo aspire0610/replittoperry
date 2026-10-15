@@ -79,14 +79,14 @@ function modelInput(
 
   return JSON.stringify({
     mode: mode === "closing" ? "盤後：依當日官方收盤資料評估下一交易日" : "盤前：依上一交易日資料評估今日",
-    latestIndexQuote: {
+    latestIndexQuote: mode === "premarket" ? {
       value: data.currentPrice,
       change: data.change,
       changePercent: data.changePercent,
       source: data.source,
       asOf: data.asOf.toISOString(),
       note: "最新可取得行情；時間戳不在交易時段內時，不可稱為即時成交。",
-    },
+    } : null,
     officialDailyClose: {
       date: data.dailyCloseDate,
       source: data.dailyCloseSource,
@@ -188,7 +188,7 @@ async function generateDailySummary(
       summary: null,
       aiProvider: null,
       analyzedAt: null,
-      error: "尚未設定可用的 AI 供應商 API 憑證，盤後摘要目前無法使用。",
+      error: `尚未設定可用的 AI 供應商 API 憑證，盤${mode === "premarket" ? "前" : "後"}摘要目前無法使用。`,
     };
   }
 
