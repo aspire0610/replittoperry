@@ -4030,7 +4030,7 @@ function Dashboard() {
   }, []);
   const marketAiDailySummaryQuery = useGetMarketAiDailySummary({
     query: {
-      enabled: isSignedIn,
+      enabled: isSignedIn && (isPremarketSummaryHours || isClosingSummaryHours),
       queryKey: ["/api/market/ai-daily-summary", isClosingSummaryHours ? "closing" : "premarket"],
       staleTime: 30 * 60_000,
       refetchInterval: 30 * 60_000,
