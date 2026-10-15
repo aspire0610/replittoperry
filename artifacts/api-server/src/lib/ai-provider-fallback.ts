@@ -2,7 +2,7 @@ import { logger } from "./logger.js";
 import OpenAI from "openai";
 
 const DEFAULT_PROVIDER_TIMEOUT_MS = 15_000;
-const DEFAULT_FALLBACK_BUDGET_MS = 45_000;
+const DEFAULT_FALLBACK_BUDGET_MS = 12_000;
 const RATE_LIMIT_COOLDOWN_MS = 60_000;
 const UPSTREAM_ERROR_COOLDOWN_MS = 15_000;
 const CONFIGURATION_ERROR_COOLDOWN_MS = 5 * 60_000;
@@ -232,10 +232,9 @@ function providerTimeoutMs(
         DEFAULT_PROVIDER_TIMEOUT_MS
       );
     case "groq":
-      return (
-        request.groqTimeoutMs ??
-        request.timeoutMs ??
-        DEFAULT_PROVIDER_TIMEOUT_MS
+      return Math.min(
+        request.groqTimeoutMs ?? request.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS,
+        6_000,
       );
     default:
       return request.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
@@ -337,6 +336,7 @@ function requestInstructions(request: AiProviderFallbackRequest): string {
     : request.instructions;
 
   return [
+    "所有面向使用者的回答先給明確答案或結論，再補最少的必要依據。刪除客套、重述、空話與重複說明；證據足夠就直接表態，證據不足或矛盾就指出具體缺口，不猜測也不強行確定。保留 Schema 必填欄位、來源、日期、條件與必要風險提示。",
     baseInstructions,
     "請只回傳一個有效的 JSON 物件，不要加上 Markdown 或其他文字。",
     `輸出必須符合此 JSON Schema：${JSON.stringify(request.schema)}`,
@@ -1179,7 +1179,10 @@ export async function withAiProviderFallback(
         const provider = providerByName.get(providerName);
         return provider ? [provider] : [];
       })
-    : providers;
+    : ["groq", "gemini", "openrouter"].flatMap((providerName) => {
+        const provider = providerByName.get(providerName as AiProviderName);
+        return provider ? [provider] : [];
+      });
   const configuredProviders = orderedProviders.filter(
     ({ apiKey, provider }) =>
       apiKey &&
@@ -1198,7 +1201,10 @@ export async function withAiProviderFallback(
   const failures: Array<{ provider: string; error: unknown }> = [];
   const fallbackBudgetMs = Math.max(
     1_000,
-    request.maxFallbackDurationMs ?? DEFAULT_FALLBACK_BUDGET_MS,
+    Math.min(
+      request.maxFallbackDurationMs ?? DEFAULT_FALLBACK_BUDGET_MS,
+      request.operation.startsWith("quant_") ? 16_000 : 12_000,
+    ),
   );
   let fallbackDeadline: number | null = null;
   for (const [index, provider] of configuredProviders.entries()) {

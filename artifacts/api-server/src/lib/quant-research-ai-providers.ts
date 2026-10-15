@@ -8,9 +8,6 @@ export const QUANT_RESEARCH_GEMINI_MODELS = [
 export const QUANT_RESEARCH_GROQ_MODEL = "openai/gpt-oss-20b";
 
 export const QUANT_RESEARCH_AI_PROVIDER_ORDER = [
-  "gemini",
-  "1min_ai",
   "groq",
-  "agnes_ai",
-  "ollama",
+  "gemini",
 ] as const satisfies readonly AiProviderName[];
