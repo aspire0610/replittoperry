@@ -1,7 +1,8 @@
 import { Router, type IRouter } from "express";
 import { clerkClient, type User } from "@clerk/express";
 import { timingSafeEqual } from "node:crypto";
-import { getOfficialDailyCloseData } from "../lib/market-data.js";
+import { getOfficialDailyCloseData, getTaiexSummary } from "../lib/market-data.js";
+import { getMarketAiDailySummary } from "../lib/market-ai-daily-summary.js";
 
 const router: IRouter = Router();
 const APP_METADATA_KEY = "twStockDashboard";
@@ -72,21 +73,25 @@ function formatSummaryLine(
   })}　${changeText}`;
 }
 
-function buildSummaryMessages(date: string, lines: string[]): string[] {
-  const heading = `台股收盤每日總結（${date}）\n`;
-  const footer = "\n資料來源：TWSE／TPEx 官方收盤資料。";
+function buildSummaryMessages(date: string, aiSummary: string, lines: string[], officialQuotesAvailable: boolean): string[] {
+  const heading = "台股 AI 盤後摘要（" + date + "）\n" + aiSummary + "\n\n自選股收盤：";
+  const footer = officialQuotesAvailable ? "\n資料來源：官方加權指數收盤資料；個股報價來自 TWSE／TPEx 官方資料。" : "\n資料來源：官方加權指數收盤資料；官方個股日線尚未更新，未附個股報價。";
   const messages: string[] = [];
+  if (!lines.length) {
+    const detail = officialQuotesAvailable ? "目前沒有可附上的自選股收盤資料。" : "官方個股收盤資料尚未更新。";
+    return [heading + "\n" + detail + footer];
+  }
   let current = heading;
   for (const line of lines) {
-    const candidate = `${current}${current === heading ? "" : "\n"}${line}`;
-    if (`${candidate}${footer}`.length > 4900 && current !== heading) {
-      messages.push(`${current}${footer}`);
-      current = `${heading}${line}`;
+    const candidate = current + (current === heading ? "" : "\n") + line;
+    if ((candidate + footer).length > 4900 && current !== heading) {
+      messages.push(current + footer);
+      current = "台股收盤行情續（" + date + "）\n" + line;
     } else {
-      current = candidate;
+      current = current === heading ? current + "\n" + line : candidate;
     }
   }
-  if (current !== heading) messages.push(`${current}${footer}`);
+  if (current !== heading) messages.push(current + footer);
   return messages;
 }
 
@@ -138,17 +143,27 @@ router.get("/market/line-closing-summary", async (req, res): Promise<void> => {
   }
 
   try {
-    const marketData = await getOfficialDailyCloseData();
-    if (marketData.asOf !== today) {
-      res.json({
-        skipped: true,
-        reason: "no-current-day-official-close",
-        date: today,
-        availableDate: marketData.asOf,
-      });
+    const indexData = await getTaiexSummary();
+    if (indexData.dailyCloseDate !== today) {
+      res.json({ skipped: true, reason: "no-current-day-official-index-close", date: today, availableDate: indexData.dailyCloseDate });
       return;
     }
-    const quoteBySymbol = new Map(marketData.quotes.map((quote) => [quote.symbol, quote]));
+    const aiSummary = await getMarketAiDailySummary(indexData);
+    if (aiSummary.status !== "available" || !aiSummary.summary) {
+      req.log.error({ date: today, error: aiSummary.error }, "LINE closing AI market summary unavailable");
+      res.status(502).json({ error: aiSummary.error ?? "AI closing market summary unavailable", date: today });
+      return;
+    }
+    let marketData: Awaited<ReturnType<typeof getOfficialDailyCloseData>> | null = null;
+    try {
+      const candidate = await getOfficialDailyCloseData();
+      if (candidate.asOf === today) marketData = candidate;
+      else req.log.warn({ date: today, availableDate: candidate.asOf }, "Official stock close data is not current; sending index summary without stock quotes");
+    } catch (error) {
+      req.log.warn({ err: error, date: today }, "Official stock close data unavailable; sending index summary without stock quotes");
+    }
+    const officialQuotesAvailable = marketData !== null;
+    const quoteBySymbol = new Map((marketData?.quotes ?? []).map((quote) => [quote.symbol, quote]));
     let sent = 0;
     let skipped = 0;
     let failed = 0;
@@ -188,13 +203,8 @@ router.get("/market/line-closing-summary", async (req, res): Promise<void> => {
           const quote = quoteBySymbol.get(symbol);
           return quote ? [formatSummaryLine(symbol, quote)] : [];
         });
-        if (!lines.length) {
-          skipped += 1;
-          continue;
-        }
-
         try {
-          await sendLineMessage(settings.lineUserId, buildSummaryMessages(today, lines));
+          await sendLineMessage(settings.lineUserId, buildSummaryMessages(today, aiSummary.summary, lines, officialQuotesAvailable));
           await saveLastSentDate(user, settings, today);
           sent += 1;
         } catch (error) {
