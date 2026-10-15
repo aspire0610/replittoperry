@@ -191,16 +191,17 @@ const LIVE_MARKET_INTERVAL_MS = 1_000;
 const MARKET_SUMMARY_INTERVAL_MS = 30_000;
 
 function isTaipeiPremarketSummaryHours(date = new Date()): boolean {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Taipei",
-    weekday: "short",
-    hour: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(date);
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Taipei", weekday: "short", hour: "2-digit", hourCycle: "h23" }).formatToParts(date);
   const getPart = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
   const hour = Number(getPart("hour"));
-  return ["Mon", "Tue", "Wed", "Thu", "Fri"].includes(getPart("weekday")) &&
-    hour >= 7 && hour < 10;
+  return ["Mon", "Tue", "Wed", "Thu", "Fri"].includes(getPart("weekday")) && hour >= 7 && hour < 10;
+}
+
+function isTaipeiClosingSummaryHours(date = new Date()): boolean {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Taipei", weekday: "short", hour: "2-digit", hourCycle: "h23" }).formatToParts(date);
+  const getPart = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  const hour = Number(getPart("hour"));
+  return ["Mon", "Tue", "Wed", "Thu", "Fri"].includes(getPart("weekday")) && hour >= 15 && hour < 17;
 }
 
 const CHART_COLORS = {
@@ -1574,18 +1575,20 @@ function MarketPremarketSummaryCard({
   loading,
   error,
   onRetry,
+  closing = false,
 }: {
   summary: MarketAiDailySummary | undefined;
   loading: boolean;
   error: unknown;
   onRetry: () => void;
+  closing?: boolean;
 }) {
   const marketDateLabel = summary?.marketDate.slice(0, 10);
   const newsSources = summary?.newsSources ?? [];
   return (
     <section className="market-ai-daily-summary premarket-summary-card" data-testid="panel-market-ai-daily-summary" aria-live="polite">
       <div className="market-ai-daily-summary-heading">
-        <strong><Sparkles size={15} aria-hidden="true" /> AI 今日盤前摘要</strong>
+        <strong><Sparkles size={15} aria-hidden="true" /> AI 今日{closing ? "盤後總結" : "盤前摘要"}</strong>
         <div>
           {marketDateLabel && <span className="market-ai-daily-date">技術面截至 {marketDateLabel}</span>}
           <AiProviderBadge
@@ -4018,8 +4021,9 @@ function Dashboard() {
   });
   const [dashboardIntroDismissed, setDashboardIntroDismissed] = useState(false);
   const [isPremarketSummaryHours, setIsPremarketSummaryHours] = useState(isTaipeiPremarketSummaryHours);
+  const [isClosingSummaryHours, setIsClosingSummaryHours] = useState(isTaipeiClosingSummaryHours);
   useEffect(() => {
-    const updateWindow = () => setIsPremarketSummaryHours(isTaipeiPremarketSummaryHours());
+    const updateWindow = () => { setIsPremarketSummaryHours(isTaipeiPremarketSummaryHours()); setIsClosingSummaryHours(isTaipeiClosingSummaryHours()); };
     updateWindow();
     const timer = window.setInterval(updateWindow, 15_000);
     return () => window.clearInterval(timer);
@@ -4027,7 +4031,7 @@ function Dashboard() {
   const marketAiDailySummaryQuery = useGetMarketAiDailySummary({
     query: {
       enabled: isSignedIn,
-      queryKey: ["/api/market/ai-daily-summary"],
+      queryKey: ["/api/market/ai-daily-summary", isClosingSummaryHours ? "closing" : "premarket"],
       staleTime: 30 * 60_000,
       refetchInterval: 30 * 60_000,
       refetchIntervalInBackground: false,
@@ -4432,12 +4436,13 @@ function Dashboard() {
             </div>
           </div>
         </div>
-        {dashboardIntroDismissed && isPremarketSummaryHours && (
+        {dashboardIntroDismissed && (isPremarketSummaryHours || isClosingSummaryHours) && (
           <MarketPremarketSummaryCard
             summary={marketAiDailySummaryQuery.data}
             loading={marketAiDailySummaryQuery.isLoading}
             error={marketAiDailySummaryQuery.isError && !marketAiDailySummaryQuery.data ? marketAiDailySummaryQuery.error : null}
             onRetry={() => void marketAiDailySummaryQuery.refetch()}
+            closing={isClosingSummaryHours}
           />
         )}
 

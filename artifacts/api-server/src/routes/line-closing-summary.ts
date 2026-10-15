@@ -148,7 +148,7 @@ router.get("/market/line-closing-summary", async (req, res): Promise<void> => {
       res.json({ skipped: true, reason: "no-current-day-official-index-close", date: today, availableDate: indexData.dailyCloseDate });
       return;
     }
-    const aiSummary = await getMarketAiDailySummary(indexData);
+    const aiSummary = await getMarketAiDailySummary(indexData, "closing");
     if (aiSummary.status !== "available" || !aiSummary.summary) {
       req.log.error({ date: today, error: aiSummary.error }, "LINE closing AI market summary unavailable");
       res.status(502).json({ error: aiSummary.error ?? "AI closing market summary unavailable", date: today });

@@ -133,7 +133,14 @@ router.get("/market/ai-daily-summary", async (req, res): Promise<void> => {
 
   try {
     const marketData = await getTaiexSummary();
-    const result = await getMarketAiDailySummary(marketData);
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Taipei", hour: "2-digit", hourCycle: "h23" }).formatToParts(new Date());
+    const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
+    const mode = req.query.mode === "closing" || (req.query.mode !== "premarket" && hour >= 15 && hour < 17) ? "closing" : "premarket";
+    if (mode === "closing") {
+      const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      if (marketData.dailyCloseDate !== today) { res.status(503).json({ error: "今日官方收盤資料尚未更新，盤後摘要暫不可用。" }); return; }
+    }
+    const result = await getMarketAiDailySummary(marketData, mode);
     res.json(GetMarketAiDailySummaryResponse.parse(result));
   } catch (error) {
     respondWithMarketError(
