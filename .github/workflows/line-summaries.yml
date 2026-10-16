@@ -68,28 +68,8 @@ jobs:
           esac
           echo "Calling $path for schedule $SCHEDULE."
 
-          if [[ "$IS_SCHEDULED" == "true" && "$path" == "/api/market/line-premarket-summary" ]]; then
-            local_time="$(TZ=Asia/Taipei date +%H%M)"
-            if (( 10#$local_time < 830 || 10#$local_time >= 900 )); then
-              echo "::notice::Skipping delayed premarket invocation outside 08:30-08:59 Asia/Taipei (local time $local_time)."
-              exit 0
-            fi
-          fi
-
-          if [[ "$IS_SCHEDULED" == "true" && "$path" == "/api/market/line-quant-signals?session=intraday" ]]; then
-            local_time="$(TZ=Asia/Taipei date +%H%M)"
-            if (( 10#$local_time < 1030 || 10#$local_time >= 1100 )); then
-              echo "::notice::Skipping delayed quant invocation outside 10:30-10:59 Asia/Taipei (local time $local_time)."
-              exit 0
-            fi
-          fi
-
-          if [[ "$IS_SCHEDULED" == "true" && "$path" == "/api/market/line-quant-signals?session=closing" ]]; then
-            local_time="$(TZ=Asia/Taipei date +%H%M)"
-            if (( 10#$local_time < 1700 || 10#$local_time >= 1740 )); then
-              echo "::notice::Skipping delayed quant invocation outside 17:00-17:39 Asia/Taipei (local time $local_time)."
-              exit 0
-            fi
+          if [[ "$IS_SCHEDULED" == "true" ]]; then
+            echo "::notice::Calling the route even if this scheduled run starts late; route-level duplicate checks remain active."
           fi
 
           umask 077
