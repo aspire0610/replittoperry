@@ -9,7 +9,7 @@ on:
         options:
           - premarket
           - closing
-        default: closing
+        default: premarket
         required: true
   schedule:
     - cron: "30-55/5 0 * * 1-5"
