@@ -9,6 +9,8 @@ on:
         options:
           - premarket
           - closing
+          - quant-intraday
+          - quant-closing
         default: premarket
         required: true
   schedule:
@@ -17,11 +19,13 @@ on:
     - cron: "10 7 * * 1-5"
     - cron: "30 7 * * 1-5"
     - cron: "0 8 * * 1-5"
+    - cron: "30-55/5 2 * * 1-5"
+    - cron: "0-30/10 9 * * 1-5"
 
 permissions: {}
 
 concurrency:
-  group: line-summaries-${{ (github.event.schedule == '30-55/5 0 * * 1-5' || inputs.summary == 'premarket') && 'premarket' || 'closing' }}
+  group: line-summaries-${{ (github.event.schedule == '30-55/5 0 * * 1-5' || inputs.summary == 'premarket') && 'premarket' || (github.event.schedule == '30-55/5 2 * * 1-5' || inputs.summary == 'quant-intraday') && 'quant-intraday' || (github.event.schedule == '0-30/10 9 * * 1-5' || inputs.summary == 'quant-closing') && 'quant-closing' || 'closing' }}
   cancel-in-progress: false
 
 jobs:
@@ -31,7 +35,7 @@ jobs:
     env:
       CRON_SECRET: ${{ secrets.CRON_SECRET }}
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-      SCHEDULE: ${{ github.event.schedule || (inputs.summary == 'premarket' && '30-55/5 0 * * 1-5' || '0 7 * * 1-5') }}
+      SCHEDULE: ${{ github.event.schedule || (inputs.summary == 'premarket' && '30-55/5 0 * * 1-5' || inputs.summary == 'quant-intraday' && '30-55/5 2 * * 1-5' || inputs.summary == 'quant-closing' && '0-30/10 9 * * 1-5' || '0 7 * * 1-5') }}
       IS_SCHEDULED: ${{ github.event_name == 'schedule' }}
     steps:
       - name: Call the matching protected Vercel route
@@ -51,6 +55,12 @@ jobs:
             "0 7 * * 1-5"|"10 7 * * 1-5"|"30 7 * * 1-5"|"0 8 * * 1-5")
               path="/api/market/line-closing-summary"
               ;;
+            "30-55/5 2 * * 1-5")
+              path="/api/market/line-quant-signals?session=intraday"
+              ;;
+            "0-30/10 9 * * 1-5")
+              path="/api/market/line-quant-signals?session=closing"
+              ;;
             *)
               echo "::error::Unexpected schedule; refusing to call any route."
               exit 1
@@ -62,6 +72,22 @@ jobs:
             local_time="$(TZ=Asia/Taipei date +%H%M)"
             if (( 10#$local_time < 830 || 10#$local_time >= 900 )); then
               echo "::notice::Skipping delayed premarket invocation outside 08:30-08:59 Asia/Taipei (local time $local_time)."
+              exit 0
+            fi
+          fi
+
+          if [[ "$IS_SCHEDULED" == "true" && "$path" == "/api/market/line-quant-signals?session=intraday" ]]; then
+            local_time="$(TZ=Asia/Taipei date +%H%M)"
+            if (( 10#$local_time < 1030 || 10#$local_time >= 1100 )); then
+              echo "::notice::Skipping delayed quant invocation outside 10:30-10:59 Asia/Taipei (local time $local_time)."
+              exit 0
+            fi
+          fi
+
+          if [[ "$IS_SCHEDULED" == "true" && "$path" == "/api/market/line-quant-signals?session=closing" ]]; then
+            local_time="$(TZ=Asia/Taipei date +%H%M)"
+            if (( 10#$local_time < 1700 || 10#$local_time >= 1740 )); then
+              echo "::notice::Skipping delayed quant invocation outside 17:00-17:39 Asia/Taipei (local time $local_time)."
               exit 0
             fi
           fi
