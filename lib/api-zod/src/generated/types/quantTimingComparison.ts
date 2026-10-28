@@ -16,7 +16,7 @@ export interface QuantTimingComparison {
   selectedCandidate: string;
   /**
      * @minItems 3
-     * @maxItems 3
+     * @maxItems 5
      */
   calibrationCandidates: QuantTimingCandidateResult[];
   validation: QuantTimingComparisonValidation;

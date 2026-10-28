@@ -6,6 +6,7 @@ import {
   hasExplicitStockPositionContext,
   hasValidatedBuyPlan,
   isStockAiActionQuestion,
+  normalizeDirectionWinProbabilityPercent,
 } from "./stock-ai-assistant-actions.ts";
 
 const validBuyPlan = {
@@ -132,4 +133,16 @@ test("recognizes common buy and sell action phrasings", () => {
   assert.equal(isStockAiActionQuestion("這檔股票要不要賣？"), true);
   assert.equal(isStockAiActionQuestion("現在能不能加碼？"), true);
   assert.equal(isStockAiActionQuestion("這個價格適合買進嗎？"), true);
+  assert.equal(isStockAiActionQuestion("今天 2449 可以買嗎？"), true);
+  assert.equal(isStockAiActionQuestion("現在適合買 2449 嗎？"), true);
+  assert.equal(isStockAiActionQuestion("研究員每日報告：目前怎麼操作？"), true);
+});
+
+test("drops malformed or unsupported direction probability without failing the answer", () => {
+  assert.equal(normalizeDirectionWinProbabilityPercent(65), 65);
+  assert.equal(normalizeDirectionWinProbabilityPercent(null), null);
+  assert.equal(normalizeDirectionWinProbabilityPercent(0.65), null);
+  assert.equal(normalizeDirectionWinProbabilityPercent(67), null);
+  assert.equal(normalizeDirectionWinProbabilityPercent(100), null);
+  assert.equal(normalizeDirectionWinProbabilityPercent(75, true), null);
 });

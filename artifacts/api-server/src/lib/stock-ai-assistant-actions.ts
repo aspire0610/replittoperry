@@ -110,6 +110,19 @@ export function hasExplicitStockPositionContext(question: string): boolean {
   );
 }
 
+export function normalizeDirectionWinProbabilityPercent(
+  value: unknown,
+  forceNull = false,
+): number | null {
+  if (forceNull) return null;
+  return Number.isInteger(value) &&
+    (value as number) >= 5 &&
+    (value as number) <= 95 &&
+    (value as number) % 5 === 0
+    ? value as number
+    : null;
+}
+
 export function getStockAiAssistantAllowedPositionActions(
   assessment: PositionActionAssessment,
   question: string,
@@ -120,7 +133,7 @@ export function getStockAiAssistantAllowedPositionActions(
 }
 
 export function isStockAiActionQuestion(question: string): boolean {
-  return /(要不要(買|賣)|該不該(買|賣)|是否.{0,6}(買|賣)|可不可以.{0,4}(買|賣|加碼|減碼)|能不能.{0,4}(買|賣|加碼|減碼)|適合.{0,3}(買|賣)|值得.{0,3}買|買進|買入|加碼|減碼|賣出|出場|續抱|持有|持倉|停損|停利|獲利了結|持有時|持有多久|持有幾天|持有期間|預計持有|繼續持有|應該持有|要不要持有|該不該持有|信心度|信心|操作建議|怎麼操作|如何操作|怎麼做)/u.test(
+  return /(要不要(買|賣)|該不該(買|賣)|是否.{0,6}(買|賣)|可以.{0,3}買|能不能.{0,3}買|可不可以.{0,3}買|適合.{0,3}(買|賣)|值得.{0,3}買|買嗎|買進|買入|加碼|減碼|賣出|出場|續抱|持有|持倉|停損|停利|獲利了結|持有時|持有多久|持有幾天|持有期間|預計持有|繼續持有|應該持有|要不要持有|該不該持有|信心度|信心|操作建議|怎麼操作|如何操作|怎麼做)/u.test(
     question,
   );
 }

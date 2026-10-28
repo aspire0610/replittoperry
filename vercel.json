@@ -1,7 +1,36 @@
 {
   "buildCommand": "pnpm --filter @workspace/api-server run build && pnpm --filter @workspace/tw-stock-dashboard run build",
   "outputDirectory": "artifacts/tw-stock-dashboard/dist/public",
+  "functions": {
+    "api/account/quant-research/stream.mjs": {
+      "maxDuration": 300
+    }
+  },
   "rewrites": [
+    {
+      "source": "/api/etfs/market",
+      "destination": "/api/market/__nested?__route=/api/etfs/market"
+    },
+    {
+      "source": "/api/account/stock-research-agents/:agentId/run",
+      "destination": "/api/account/stock-research-agents?__route=/api/account/stock-research-agents/:agentId/run"
+    },
+    {
+      "source": "/api/account/stock-research-agents/:agentId",
+      "destination": "/api/account/stock-research-agents?__route=/api/account/stock-research-agents/:agentId"
+    },
+    {
+      "source": "/api/stocks/ai-picks/progress",
+      "destination": "/api/stocks/__nested?__route=/api/stocks/ai-picks/progress"
+    },
+    {
+      "source": "/api/stocks/ai-picks/scan-jobs",
+      "destination": "/api/stocks/__nested?__route=/api/stocks/ai-picks/scan-jobs"
+    },
+    {
+      "source": "/api/stocks/ai-picks/scan-jobs/:jobId",
+      "destination": "/api/stocks/__nested?__route=/api/stocks/ai-picks/scan-jobs/:jobId"
+    },
     {
       "source": "/api/line/webhook",
       "destination": "/api/account/line-webhook"
@@ -9,6 +38,10 @@
     {
       "source": "/api/account/line-notifications/link-code",
       "destination": "/api/account/line-notifications-link-code"
+    },
+    {
+      "source": "/api/account/quant-research/interpret",
+      "destination": "/api/account/quant-research-interpret"
     },
     {
       "source": "/((?!api/).*)",

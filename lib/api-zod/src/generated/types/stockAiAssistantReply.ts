@@ -7,6 +7,7 @@
  */
 import type { StockAiAssistantReplyAiProvider } from './stockAiAssistantReplyAiProvider';
 import type { StockAiAssistantReplyContext } from './stockAiAssistantReplyContext';
+import type { StockAiAssistantReplyPositionAction } from './stockAiAssistantReplyPositionAction';
 
 export interface StockAiAssistantReply {
   symbol: string;
@@ -14,6 +15,7 @@ export interface StockAiAssistantReply {
   aiProvider: StockAiAssistantReplyAiProvider;
   /** @maxLength 1600 */
   answer: string;
+  positionAction: StockAiAssistantReplyPositionAction;
   /**
      * @maxItems 5
      * @items.maxLength 180

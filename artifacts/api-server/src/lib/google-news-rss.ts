@@ -4,6 +4,7 @@ export type GoogleNewsRssResult = {
   title: string;
   url: string;
   snippet: string;
+  publishedAt?: string;
 };
 
 export type GoogleNewsRssAvailabilityDiagnostic = {
@@ -52,7 +53,7 @@ function cleanXmlText(value: string, maxLength: number): string {
     .slice(0, maxLength);
 }
 
-function readTag(xml: string, tag: "title" | "link" | "description"): string {
+function readTag(xml: string, tag: "title" | "link" | "description" | "pubDate"): string {
   const match = xml.match(
     new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}\\s*>`, "iu"),
   );
@@ -82,7 +83,16 @@ export function parseGoogleNewsRss(xml: string): GoogleNewsRssResult[] {
     const snippet = cleanXmlText(readTag(item, "description"), 500);
     if (!title || !url || seenUrls.has(url)) continue;
     seenUrls.add(url);
-    results.push({ title, url, snippet });
+    const rawPublishedAt = cleanXmlText(readTag(item, "pubDate"), 100);
+    const publishedAtMs = rawPublishedAt ? Date.parse(rawPublishedAt) : Number.NaN;
+    results.push({
+      title,
+      url,
+      snippet,
+      ...(Number.isFinite(publishedAtMs)
+        ? { publishedAt: new Date(publishedAtMs).toISOString() }
+        : {}),
+    });
     if (results.length === MAX_RESULTS) break;
   }
 

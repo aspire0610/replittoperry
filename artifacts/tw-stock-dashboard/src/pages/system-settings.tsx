@@ -51,6 +51,7 @@ export default function SystemSettingsPage() {
   const unlinkLine = useDeleteAccountLineLink({ request: { credentials: "include" } });
   const [closingSummary, setClosingSummary] = useState(false);
   const [premarketSummary, setPremarketSummary] = useState(false);
+  const [quantSignalAlerts, setQuantSignalAlerts] = useState(false);
   const [linkCode, setLinkCode] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
 
@@ -58,6 +59,7 @@ export default function SystemSettingsPage() {
     if (!settingsQuery.data) return;
     setClosingSummary(settingsQuery.data.closingSummary);
     setPremarketSummary(settingsQuery.data.premarketSummary);
+    setQuantSignalAlerts(settingsQuery.data.quantSignalAlerts);
   }, [settingsQuery.data]);
 
   const persistSettings = () => {
@@ -66,6 +68,7 @@ export default function SystemSettingsPage() {
       openingNotice: settingsQuery.data?.openingNotice ?? false,
       closingSummary,
       premarketSummary,
+      quantSignalAlerts,
     } }, {
       onSuccess: () => {
         setStatusMessage("LINE 通知設定已儲存。");
@@ -164,8 +167,8 @@ export default function SystemSettingsPage() {
           <div className="system-settings-icon" aria-hidden="true"><BellRing size={19} /></div>
           <div className="system-settings-card-copy">
             <p className="system-settings-eyebrow">MESSAGING / LINE</p>
-            <h2 id="line-settings-title">LINE 收盤摘要</h2>
-            <p>每個台股交易日傳送一次 TWSE／TPEx 官方收盤資料，只傳送給已連結的 LINE 帳號。加入官方帳號後，也可直接傳一般訊息與 AI 助手聊天；傳送「清除對話」可刪除 LINE 聊天脈絡。</p>
+            <h2 id="line-settings-title">LINE 通知設定</h2>
+            <p>設定個人收盤摘要與量化掃描推播；所有內容只傳送給已連結的 LINE 帳號。加入官方帳號後，也可直接傳一般訊息與 AI 助手聊天；傳送「清除對話」可刪除 LINE 聊天脈絡。</p>
           </div>
           <span className={`line-link-state ${settingsQuery.data?.linked ? "is-linked" : ""}`} data-testid="status-line-link">
             {settingsQuery.data?.linked ? "已連結" : "未連結"}
@@ -246,10 +249,19 @@ export default function SystemSettingsPage() {
                 />
                 每個台股交易日接收收盤摘要
               </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={quantSignalAlerts}
+                  onChange={(event) => setQuantSignalAlerts(event.target.checked)}
+                  data-testid="input-line-quant-signals"
+                />
+                每個台股交易日 10:30 與 17:00 接收量化掃描（僅推播符合條件的自選股）
+              </label>
             </div>
 
             <div className="system-settings-footer">
-              <p className="line-settings-note">盤前摘要於台灣時間平日 8:30 排程傳送；收盤摘要約於台灣時間 15:00 後傳送，週末、國定假日或交易所尚未提供當日收盤資料時不會傳送。盤中觸價與開盤通知不在此排程內。</p>
+              <p className="line-settings-note">盤前摘要於台灣時間 8:30 傳送，收盤摘要於收盤資料到齊後傳送。量化掃描於每個台股交易日 10:30 與 17:00 執行，只推播符合條件的自選股；資料日期或來源未通過檢查時不傳送。</p>
               {!settingsQuery.data?.linked && (
                 <p className="line-settings-note">請先產生連結碼並完成 LINE 綁定，才能儲存摘要設定。</p>
               )}

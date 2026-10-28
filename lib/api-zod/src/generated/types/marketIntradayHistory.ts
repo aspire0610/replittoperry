@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { MarketIntradayBar } from './marketIntradayBar';
+import type { MarketIntradayHistorySessionType } from './marketIntradayHistorySessionType';
 import type { MarketIntradayHistoryTimeframe } from './marketIntradayHistoryTimeframe';
 
 export interface MarketIntradayHistory {
@@ -13,6 +14,7 @@ export interface MarketIntradayHistory {
   /** @pattern ^\d{4}-\d{2}-\d{2}$ */
   date: string;
   timeframe: MarketIntradayHistoryTimeframe;
+  sessionType: MarketIntradayHistorySessionType;
   source: string;
   previousClose: number;
   asOf: Date;

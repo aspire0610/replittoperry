@@ -17,6 +17,69 @@ const FUTURES_FRESHNESS_MS = 90_000;
 const FUTURES_WAIT_MS = 6_000;
 const FUTURES_ALIAS_REFRESH_MS = 6 * 60 * 60 * 1000;
 const STREAM_HEARTBEAT_TIMEOUT_MS = 90_000;
+const FUGLE_STOCK_HISTORY_MAX_CONCURRENT = 3;
+const FUGLE_STOCK_HISTORY_MAX_ATTEMPTS = 3;
+const FUGLE_STOCK_HISTORY_MAX_RETRY_AFTER_MS = 10_000;
+let activeFugleStockHistoryRequests = 0;
+const fugleStockHistoryWaiters: Array<() => void> = [];
+
+async function withFugleStockHistorySlot<T>(
+  operation: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+  if (activeFugleStockHistoryRequests >= FUGLE_STOCK_HISTORY_MAX_CONCURRENT) {
+    await new Promise<void>((resolve, reject) => {
+      const waiter = () => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      };
+      const onAbort = () => {
+        const index = fugleStockHistoryWaiters.indexOf(waiter);
+        if (index >= 0) fugleStockHistoryWaiters.splice(index, 1);
+        reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+      };
+      fugleStockHistoryWaiters.push(waiter);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  } else {
+    activeFugleStockHistoryRequests += 1;
+  }
+
+  try {
+    if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+    return await operation();
+  } finally {
+    const next = fugleStockHistoryWaiters.shift();
+    if (next) next();
+    else activeFugleStockHistoryRequests -= 1;
+  }
+}
+
+function delayWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function fugleRetryAfterMs(response: Response): number | null {
+  const header = response.headers.get("retry-after");
+  if (!header) return null;
+  const seconds = Number(header);
+  const delay = Number.isFinite(seconds)
+    ? seconds * 1_000
+    : Date.parse(header) - Date.now();
+  return Number.isFinite(delay) && delay > 0 ? delay : null;
+}
 
 type FugleQuotePayload = {
   name?: unknown;
@@ -28,6 +91,10 @@ type FugleQuotePayload = {
   changePercent?: unknown;
   lastUpdated?: unknown;
   lastTrade?: { time?: unknown; price?: unknown };
+  openPrice?: unknown;
+  highPrice?: unknown;
+  lowPrice?: unknown;
+  total?: { tradeVolume?: unknown };
 };
 
 type FugleStreamMessage = {
@@ -71,6 +138,16 @@ export type FugleTaiexIntradayCandle = {
 export type FugleTaiexIntradayData = {
   date: string;
   bars: FugleTaiexIntradayCandle[];
+};
+
+export type FugleStockDailyBar = {
+  date: string;
+  timestamp: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
 };
 
 type PendingIndexWaiter = {
@@ -470,6 +547,152 @@ export async function fetchFugleTaiexIntradayCandles(): Promise<FugleTaiexIntrad
   return parseFugleTaiexIntradayCandles(payload);
 }
 
+export async function fetchFugleTaiexHistoricalIntradayCandles(
+  date: string,
+): Promise<FugleTaiexIntradayData> {
+  const apiKey = process.env.FUGLE_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error("尚未設定 FUGLE_API_KEY，無法取得加權指數歷史分時資料。");
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error("加權指數歷史分時日期格式錯誤");
+  }
+
+  const url = new URL(`https://api.fugle.tw/marketdata/v1.0/stock/historical/candles/${INDEX_SYMBOL}`);
+  url.searchParams.set("timeframe", "1");
+  url.searchParams.set("from", date);
+  url.searchParams.set("to", date);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: { Accept: "application/json", "X-API-KEY": apiKey },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    throw new Error("Fugle 加權指數歷史分時暫時無法連線");
+  }
+  if (!response.ok) {
+    throw new Error(`Fugle 加權指數歷史分時回應 HTTP ${response.status}`);
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error("Fugle 回傳無法辨識的加權指數歷史分時資料");
+  }
+  if (typeof payload !== "object" || payload === null) {
+    throw new Error("Fugle 加權指數歷史分時回傳格式錯誤");
+  }
+  const historical = payload as Record<string, unknown>;
+  if (
+    historical.symbol !== INDEX_SYMBOL ||
+    historical.exchange !== "TWSE" ||
+    String(historical.timeframe) !== "1" ||
+    (historical.type !== undefined && historical.type !== "INDEX") ||
+    !Array.isArray(historical.data)
+  ) {
+    throw new Error("Fugle 加權指數歷史分時代碼或週期不符");
+  }
+  for (const rawBar of historical.data) {
+    if (typeof rawBar !== "object" || rawBar === null) {
+      throw new Error("Fugle 加權指數歷史分時包含無效 K 線");
+    }
+    const candleDate = (rawBar as Record<string, unknown>).date;
+    if (typeof candleDate !== "string" || !candleDate.startsWith(`${date}T`)) {
+      throw new Error("Fugle 加權指數歷史分時日期與要求不符");
+    }
+  }
+
+  // Fugle's historical endpoint omits the top-level session date and may omit
+  // the optional security type, unlike the intraday endpoint.
+  const result = parseFugleTaiexIntradayCandles({
+    type: "INDEX",
+    exchange: historical.exchange,
+    symbol: historical.symbol,
+    timeframe: historical.timeframe,
+    date,
+    data: historical.data,
+  });
+  if (result.date !== date) {
+    throw new Error("Fugle 加權指數歷史分時日期與要求不符");
+  }
+  return result;
+}
+
+export async function fetchFugleTaiexHistoricalDailyBars(
+  from: string,
+  to: string,
+): Promise<Array<{ date: string; open: number; high: number; low: number; close: number }>> {
+  const apiKey = process.env.FUGLE_API_KEY?.trim();
+  if (!apiKey) throw new Error("尚未設定 Fugle 歷史行情備援來源。");
+  const chunks = splitFugleDailyHistoryRange(from, to);
+  const byDate = new Map<string, { date: string; open: number; high: number; low: number; close: number }>();
+
+  for (const chunk of chunks) {
+    const url = new URL(`https://api.fugle.tw/marketdata/v1.0/stock/historical/candles/${INDEX_SYMBOL}`);
+    url.searchParams.set("timeframe", "D");
+    url.searchParams.set("from", chunk.from);
+    url.searchParams.set("to", chunk.to);
+    url.searchParams.set("fields", "open,high,low,close");
+    url.searchParams.set("sort", "asc");
+    let response: Response | null = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        response = await fetch(url, {
+          headers: { Accept: "application/json", "X-API-KEY": apiKey },
+          signal: AbortSignal.timeout(12_000),
+        });
+      } catch {
+        if (attempt === 2) throw new Error("Fugle 加權指數歷史日線暫時無法連線");
+      }
+      if (response?.ok || (response && response.status !== 429) || attempt === 2) break;
+      const retryAfter = Number(response?.headers.get("retry-after"));
+      const delayMs = Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(retryAfter * 1_000, 5_000)
+        : 500 * (attempt + 1);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    if (!response?.ok) {
+      throw new Error(`Fugle 加權指數歷史日線回應 HTTP ${response?.status ?? "unknown"}`);
+    }
+    const payload = await response.json() as {
+      symbol?: unknown;
+      type?: unknown;
+      exchange?: unknown;
+      timeframe?: unknown;
+      data?: unknown;
+    };
+    if (
+      payload.symbol !== INDEX_SYMBOL ||
+      payload.type !== "INDEX" ||
+      payload.exchange !== "TWSE" ||
+      payload.timeframe !== "D" ||
+      !Array.isArray(payload.data)
+    ) throw new Error("Fugle 加權指數歷史日線代碼、交易所或週期不符");
+
+    for (const raw of payload.data) {
+      if (typeof raw !== "object" || raw === null) continue;
+      const item = raw as Record<string, unknown>;
+      const date = typeof item.date === "string" ? item.date.slice(0, 10) : "";
+      const open = finiteNumber(item.open);
+      const high = finiteNumber(item.high);
+      const low = finiteNumber(item.low);
+      const close = finiteNumber(item.close);
+      if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(date) || date < chunk.from || date > chunk.to ||
+        open === null || high === null || low === null || close === null ||
+        open <= 0 || high <= 0 || low <= 0 || close <= 0 ||
+        low > Math.min(open, close) || high < Math.max(open, close)
+      ) continue;
+      byDate.set(date, { date, open, high, low, close });
+    }
+  }
+  const bars = [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date));
+  if (bars.length < 2) throw new Error("Fugle 加權指數歷史日線不足兩個交易日");
+  return bars;
+}
+
 function isFreshFuturesTick(
   tick: FugleFuturesTick | null,
 ): tick is FugleFuturesTick {
@@ -781,6 +1004,12 @@ export async function fetchFugleStockQuote(
     previousClose,
     change,
     changePercent,
+    volume: finiteNumber(payload.total?.tradeVolume) === null
+      ? null
+      : finiteNumber(payload.total?.tradeVolume)! * 1_000,
+    openPrice: finiteNumber(payload.openPrice),
+    highPrice: finiteNumber(payload.highPrice),
+    lowPrice: finiteNumber(payload.lowPrice),
     source: tradeAsOf
       ? "Fugle MarketData · 成交時間"
       : "Fugle MarketData · 報價更新時間",
@@ -788,6 +1017,199 @@ export async function fetchFugleStockQuote(
     available: true,
     error: null,
   };
+}
+
+export async function fetchFugleStockHistoricalDailyBars(
+  symbol: string,
+  from: string,
+  to: string,
+  signal?: AbortSignal,
+): Promise<{ exchange: "TWSE" | "TPEx"; bars: FugleStockDailyBar[] }> {
+  const apiKey = process.env.FUGLE_API_KEY?.trim();
+  if (!apiKey) throw new Error("尚未設定 Fugle 歷史行情備援來源。");
+  const stockCode = symbol.trim().toUpperCase().replace(/\.(TW|TWO)$/, "");
+  const fromTime = Date.parse(`${from}T00:00:00Z`);
+  const toTime = Date.parse(`${to}T00:00:00Z`);
+  if (
+    !/^[A-Z0-9]{4,6}$/.test(stockCode) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(from) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(to) ||
+    !Number.isFinite(fromTime) ||
+    !Number.isFinite(toTime) ||
+    fromTime > toTime ||
+    toTime - fromTime >= 365 * 86_400_000
+  ) throw new Error("Fugle 歷史日Ｋ查詢參數無效或區間達一年");
+
+  const url = new URL(
+    `https://api.fugle.tw/marketdata/v1.0/stock/historical/candles/${encodeURIComponent(stockCode)}`,
+  );
+  url.searchParams.set("timeframe", "D");
+  url.searchParams.set("from", from);
+  url.searchParams.set("to", to);
+  url.searchParams.set("fields", "open,high,low,close,volume");
+  url.searchParams.set("sort", "asc");
+  const response = await withFugleStockHistorySlot(async () => {
+    let lastResponse: Response | null = null;
+    for (let attempt = 0; attempt < FUGLE_STOCK_HISTORY_MAX_ATTEMPTS; attempt += 1) {
+      lastResponse = null;
+      try {
+        lastResponse = await fetch(url, {
+          headers: { Accept: "application/json", "X-API-KEY": apiKey },
+          signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(12_000)]) : AbortSignal.timeout(12_000),
+        });
+      } catch (error) {
+        if (signal?.aborted) throw signal.reason ?? error;
+        if (attempt === FUGLE_STOCK_HISTORY_MAX_ATTEMPTS - 1) {
+          throw new Error("Fugle 個股歷史日Ｋ暫時無法連線", { cause: error });
+        }
+        await delayWithSignal(750 * 2 ** attempt, signal);
+        continue;
+      }
+
+      if (lastResponse.ok || lastResponse.status !== 429) break;
+      const retryAfterMs = fugleRetryAfterMs(lastResponse);
+      if (
+        attempt === FUGLE_STOCK_HISTORY_MAX_ATTEMPTS - 1 ||
+        (retryAfterMs !== null && retryAfterMs > FUGLE_STOCK_HISTORY_MAX_RETRY_AFTER_MS)
+      ) break;
+      const delayMs = retryAfterMs ?? Math.min(750 * 2 ** attempt, 6_000);
+      await delayWithSignal(delayMs, signal);
+    }
+    if (!lastResponse?.ok) {
+      throw new Error(`Fugle 個股歷史日Ｋ回應 HTTP ${lastResponse?.status ?? "unknown"}`);
+    }
+    return lastResponse;
+  }, signal);
+  const payload = await response.json() as {
+    symbol?: unknown;
+    exchange?: unknown;
+    timeframe?: unknown;
+    data?: unknown;
+  };
+  if (
+    payload.symbol !== stockCode ||
+    (payload.exchange !== "TWSE" && payload.exchange !== "TPEx") ||
+    payload.timeframe !== "D" ||
+    !Array.isArray(payload.data)
+  ) throw new Error("Fugle 個股歷史日Ｋ代碼、交易所或週期不符");
+
+  const bars = payload.data.flatMap((raw): FugleStockDailyBar[] => {
+    if (typeof raw !== "object" || raw === null) return [];
+    const item = raw as Record<string, unknown>;
+    const date = typeof item.date === "string" ? item.date : "";
+    const open = finiteNumber(item.open);
+    const high = finiteNumber(item.high);
+    const low = finiteNumber(item.low);
+    const close = finiteNumber(item.close);
+    const volume = finiteNumber(item.volume);
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+      date < from || date > to ||
+      open === null || high === null || low === null || close === null || volume === null ||
+      open <= 0 || high <= 0 || low <= 0 || close <= 0 || volume < 0 ||
+      low > Math.min(open, close) || high < Math.max(open, close)
+    ) return [];
+    return [{
+      date,
+      timestamp: Date.parse(`${date}T05:30:00.000Z`),
+      open,
+      high,
+      low,
+      close,
+      volume,
+    }];
+  }).sort((left, right) => left.date.localeCompare(right.date));
+  if (!bars.length) throw new Error("Fugle 個股歷史日Ｋ沒有有效交易資料");
+  return { exchange: payload.exchange, bars };
+}
+
+export function splitFugleDailyHistoryRange(from: string, to: string): Array<{ from: string; to: string }> {
+  const start = Date.parse(`${from}T00:00:00Z`);
+  const end = Date.parse(`${to}T00:00:00Z`);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(from) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(to) ||
+    !Number.isFinite(start) ||
+    !Number.isFinite(end) ||
+    start > end
+  ) throw new Error("Fugle 歷史日Ｋ查詢日期無效");
+
+  const dayMs = 86_400_000;
+  const maxSpanDays = 360;
+  const chunks: Array<{ from: string; to: string }> = [];
+  for (let cursor = start; cursor <= end;) {
+    const chunkEnd = Math.min(end, cursor + maxSpanDays * dayMs);
+    chunks.push({
+      from: new Date(cursor).toISOString().slice(0, 10),
+      to: new Date(chunkEnd).toISOString().slice(0, 10),
+    });
+    cursor = chunkEnd + dayMs;
+  }
+  return chunks;
+}
+
+const fugleStockDailyRangeCache = new Map<string, {
+  expiresAt: number;
+  promise: Promise<{ exchange: "TWSE" | "TPEx"; bars: FugleStockDailyBar[] }>;
+}>();
+
+export async function fetchFugleStockHistoricalDailyRange(
+  symbol: string,
+  from: string,
+  to: string,
+  signal?: AbortSignal,
+): Promise<{ exchange: "TWSE" | "TPEx"; bars: FugleStockDailyBar[] }> {
+  const key = `${symbol.trim().toUpperCase()}:${from}:${to}`;
+  if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+  if (signal) {
+    const chunks = splitFugleDailyHistoryRange(from, to);
+    let exchange: "TWSE" | "TPEx" | null = null;
+    const byDate = new Map<string, FugleStockDailyBar>();
+    for (const chunk of chunks) {
+      const result = await fetchFugleStockHistoricalDailyBars(symbol, chunk.from, chunk.to, signal);
+      if (exchange !== null && result.exchange !== exchange) {
+        throw new Error("Fugle 歷史日Ｋ分段回傳不同交易所，已拒絕合併");
+      }
+      exchange = result.exchange;
+      for (const bar of result.bars) byDate.set(bar.date, bar);
+    }
+    const bars = [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date));
+    if (!exchange || !bars.length) throw new Error("Fugle 個股歷史日Ｋ沒有完整可用資料");
+    return { exchange, bars };
+  }
+  const cached = fugleStockDailyRangeCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.promise;
+
+  const promise = (async () => {
+  const chunks = splitFugleDailyHistoryRange(from, to);
+  let exchange: "TWSE" | "TPEx" | null = null;
+  const byDate = new Map<string, FugleStockDailyBar>();
+  for (const chunk of chunks) {
+    const result = await fetchFugleStockHistoricalDailyBars(symbol, chunk.from, chunk.to);
+    if (exchange !== null && result.exchange !== exchange) {
+      throw new Error("Fugle 歷史日Ｋ分段回傳不同交易所，已拒絕合併");
+    }
+    exchange = result.exchange;
+    for (const bar of result.bars) byDate.set(bar.date, bar);
+  }
+  const bars = [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date));
+  if (!exchange || !bars.length) throw new Error("Fugle 個股歷史日Ｋ沒有完整可用資料");
+  return { exchange, bars };
+  })();
+  fugleStockDailyRangeCache.set(key, { expiresAt: Date.now() + 24 * 60 * 60 * 1_000, promise });
+  try {
+    if (fugleStockDailyRangeCache.size > 500) {
+      for (const [cacheKey, value] of fugleStockDailyRangeCache) {
+        if (value.expiresAt <= Date.now()) fugleStockDailyRangeCache.delete(cacheKey);
+      }
+    }
+    return await promise;
+  } catch (error) {
+    if (fugleStockDailyRangeCache.get(key)?.promise === promise) {
+      fugleStockDailyRangeCache.delete(key);
+    }
+    throw error;
+  }
 }
 
 export function toFugleTaiexMarketQuote(

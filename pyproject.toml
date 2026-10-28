@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.13"
 dependencies = [
+    "finlab>=2.2.13",
     "numpy>=2.5.3",
     "pandas>=3.0.6",
     "plotly>=7.1.0",

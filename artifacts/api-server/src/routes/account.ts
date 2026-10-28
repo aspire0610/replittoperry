@@ -15,6 +15,15 @@ import {
   PostAccountQuantResearchRunSummaryResponse,
   GetAccountStockAiConversationQueryParams,
   GetAccountStockAiConversationResponse,
+  GetAccountStockResearchAgentsResponse,
+  CreateAccountStockResearchAgentBody,
+  CreateAccountStockResearchAgentResponse,
+  UpdateAccountStockResearchAgentParams,
+  UpdateAccountStockResearchAgentBody,
+  UpdateAccountStockResearchAgentResponse,
+  DeleteAccountStockResearchAgentParams,
+  RunAccountStockResearchAgentParams,
+  RunAccountStockResearchAgentResponse,
   GetAdminUsersQueryParams,
   GetAdminUsersResponse,
   DeleteAccountStockAiConversationQueryParams,
@@ -40,6 +49,7 @@ import {
   PutAccountWatchlistBody,
   PutAccountWatchlistResponse,
   PutAccountLineNotificationsBody,
+  type AssistantChatReply,
 } from "@workspace/api-zod";
 import { deleteAccountData } from "../lib/account-data.js";
 import { getAdminUserDeleteBlockReason } from "../lib/admin-user-delete-policy.js";
@@ -51,16 +61,29 @@ import {
   saveStockAiConversation,
 } from "../lib/stock-ai-conversations.js";
 import { askAssistantChat } from "../lib/assistant-chat.js";
+import { getAiProviderFailure } from "../lib/ai-provider-error.js";
 import {
+  getLineDailySummaryMode,
   formatLineAssistantReply,
   type LineAssistantMessage,
 } from "../lib/line-assistant-format.js";
 import { diagnoseLineWebSearch } from "../lib/line-web-search.js";
 import {
   clearLineAssistantHistory,
+  getLineAssistantOwner,
   getLineAssistantHistory,
   saveLineAssistantTurn,
+  setLineAssistantOwner,
 } from "../lib/line-assistant-conversations.js";
+import { listResearchJobs } from "../lib/ai-research-jobs.js";
+import {
+  createStockResearchAgent,
+  deleteStockResearchAgent,
+  listStockResearchAgents,
+  setStockResearchAgentEnabled,
+} from "../lib/ai-stock-research-agents.js";
+import { getStockCatalog, getTaiexSummary } from "../lib/market-data.js";
+import { getMarketAiDailySummary } from "../lib/market-ai-daily-summary.js";
 import {
   createPaperTradingAccount,
   getPaperTradingPortfolio,
@@ -68,9 +91,7 @@ import {
   recordPaperTrade,
   resetPaperTradingAccount,
 } from "../lib/paper-trading.js";
-import {
-  QuantMarketDataError,
-} from "../lib/quant-market-data.js";
+import { QuantMarketDataError } from "../lib/quant-market-data.js";
 import {
   interpretQuantResearchHypothesis,
   QuantResearchError,
@@ -111,6 +132,7 @@ type LineSettings = {
   openingNotice: boolean;
   closingSummary: boolean;
   premarketSummary: boolean;
+  quantSignalAlerts: boolean;
   lineUserId?: string;
   pendingLinkHash?: string;
   pendingLinkExpiresAt?: number;
@@ -123,7 +145,7 @@ function getLineSettings(user: User): LineSettings {
       ? (appMetadata as Record<string, unknown>).lineNotifications
       : undefined;
   if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
-    return { alerts: [], openingNotice: false, closingSummary: false, premarketSummary: false };
+    return { alerts: [], openingNotice: false, closingSummary: false, premarketSummary: false, quantSignalAlerts: false };
   }
   const value = candidate as Partial<LineSettings>;
   const parsed = PutAccountLineNotificationsBody.safeParse({
@@ -131,9 +153,10 @@ function getLineSettings(user: User): LineSettings {
     openingNotice: value.openingNotice ?? false,
     closingSummary: value.closingSummary ?? false,
     premarketSummary: value.premarketSummary ?? false,
+    quantSignalAlerts: value.quantSignalAlerts ?? false,
   });
   return {
-    ...(parsed.success ? parsed.data : { alerts: [], openingNotice: false, closingSummary: false, premarketSummary: false }),
+    ...(parsed.success ? parsed.data : { alerts: [], openingNotice: false, closingSummary: false, premarketSummary: false, quantSignalAlerts: false }),
     ...(typeof value.lineUserId === "string" ? { lineUserId: value.lineUserId } : {}),
     ...(typeof value.pendingLinkHash === "string" ? { pendingLinkHash: value.pendingLinkHash } : {}),
     ...(typeof value.pendingLinkExpiresAt === "number" ? { pendingLinkExpiresAt: value.pendingLinkExpiresAt } : {}),
@@ -148,6 +171,7 @@ function lineSettingsResponse(user: User) {
     openingNotice: settings.openingNotice,
     closingSummary: settings.closingSummary,
     premarketSummary: settings.premarketSummary,
+    quantSignalAlerts: settings.quantSignalAlerts,
   });
 }
 
@@ -258,6 +282,87 @@ type AccountLocals = {
 const router: IRouter = Router();
 const SSE_PROXY_FLUSH_PADDING = `:${" ".repeat(4_096)}\n\n`;
 
+function taiwanDateKey(date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+async function buildLineDailySummaryReply(
+  mode: "premarket" | "closing",
+): Promise<AssistantChatReply> {
+  const unavailable = (
+    answer: string,
+    sources: AssistantChatReply["sources"] = [],
+  ): AssistantChatReply => ({
+    answer,
+    aiProvider: "rule_based",
+    searchStatus: "unavailable",
+    sources,
+    answeredAt: new Date(),
+  });
+  try {
+    const data = await getTaiexSummary();
+    const sourceUrl = data.dailyCloseSource.includes("TWSE")
+      ? "https://www.twse.com.tw/indicesReport/MI_5MINS_HIST?response=html"
+      : "https://www.fugle.tw/market-data";
+    const indexSource = {
+      title: `加權指數日線（${data.dailyCloseDate}；${data.dailyCloseSource}）`,
+      url: sourceUrl,
+    };
+    if (mode === "closing" && data.dailyCloseDate !== taiwanDateKey()) {
+      return unavailable(
+        `今日官方加權指數日線尚未更新，最新完整資料為 ${data.dailyCloseDate}；因此暫時不能產生今日盤後摘要，稍後再問。`,
+        [indexSource],
+      );
+    }
+
+    const summary = await getMarketAiDailySummary(data, mode);
+    if (summary.status !== "available" || !summary.summary) {
+      return unavailable(
+        "目前摘要服務暫時無法完成判讀；不以零星盤後成交資料代替完整摘要，請稍後再試。",
+        [indexSource, ...summary.newsSources.slice(0, 2)],
+      );
+    }
+    const sources = [
+      indexSource,
+      ...(mode === "premarket"
+        ? [
+            {
+              title: "納斯達克綜合指數歷史行情",
+              url: "https://www.nasdaq.com/market-activity/index/comp/historical",
+            },
+            {
+              title: "道瓊工業指數歷史行情",
+              url: "https://finance.yahoo.com/quote/%5EDJI/history/",
+            },
+          ]
+        : []),
+      ...summary.newsSources.slice(0, 2),
+    ].slice(0, 5);
+    return {
+      answer: `台股 AI ${mode === "premarket" ? "盤前摘要" : "盤後摘要"}（${summary.marketDate}）\n${summary.summary}${summary.newsSearchStatus === "searched" ? "\n新聞僅為搜尋線索，尚未核實。" : "\n目前沒有可核實的近期新聞線索。"}`,
+      aiProvider: summary.aiProvider ?? "rule_based",
+      searchStatus: summary.newsSearchStatus === "searched"
+        ? "searched"
+        : summary.newsSearchStatus === "unavailable"
+          ? "unavailable"
+          : "not_needed",
+      sources,
+      answeredAt: summary.analyzedAt ?? new Date(),
+    };
+  } catch {
+    return unavailable(
+      "目前無法取得足夠的大盤日線資料，暫時不能產生可靠摘要；請稍後再試。",
+    );
+  }
+}
+
 router.post(
   ["/line/webhook", "/account/line-webhook"],
   async (req: Request, res: Response): Promise<void> => {
@@ -339,7 +444,8 @@ router.post(
           pendingLinkHash: undefined,
           pendingLinkExpiresAt: undefined,
         });
-        await replyToLine(replyToken, "LINE 已成功連結。你可以回到台股儀表板設定價格提醒，也可以直接在 LINE 詢問 AI 助手。");
+        await setLineAssistantOwner(lineUserId, user.id);
+        await replyToLine(replyToken, "LINE 已成功連結。你可以回到台股儀表板設定價格提醒，也可以直接在 LINE 詢問投資研究部 CEO。");
       } catch (error) {
         req.log.error({ err: error }, "Unable to complete LINE account link");
         try { await replyToLine(replyToken, "連結暫時失敗，請稍後從儀表板重新產生連結碼。"); }
@@ -360,13 +466,26 @@ router.post(
     }
 
     try {
+      const summaryMode = getLineDailySummaryMode(text);
+      if (summaryMode) {
+        const reply = await buildLineDailySummaryReply(summaryMode);
+        await saveLineAssistantTurn(lineUserId, text, reply.answer);
+        await replyToLine(replyToken, formatLineAssistantReply(reply));
+        continue;
+      }
       const history = await getLineAssistantHistory(lineUserId);
+      const linkedOwnerId = await getLineAssistantOwner(lineUserId);
       const requestId =
         typeof req.id === "string" || typeof req.id === "number"
           ? req.id
           : undefined;
       const reply = await askAssistantChat(text, undefined, history, requestId, {
         includeLineStockDetails: true,
+        researchOwner: {
+          channel: "line",
+          lineUserId,
+          ...(linkedOwnerId ? { userId: linkedOwnerId } : {}),
+        },
       });
       await saveLineAssistantTurn(lineUserId, text, reply.answer);
       await replyToLine(replyToken, formatLineAssistantReply(reply));
@@ -375,7 +494,7 @@ router.post(
       try {
         await replyToLine(
           replyToken,
-          "AI 助手目前無法完成回答，請稍後再試；若問題持續，請聯絡台股儀表板管理員。",
+          "投資研究部 CEO 目前無法完成回答，請稍後再試；若問題持續，請聯絡台股儀表板管理員。",
         );
       } catch (replyError) {
         req.log.warn({ err: replyError }, "Unable to send LINE assistant error reply");
@@ -419,6 +538,8 @@ function getQuantOperationFailure(
   error: unknown,
   fallbackMessage: string,
 ): { status: number; message: string } {
+  const aiFailure = getAiProviderFailure(error);
+  if (aiFailure) return aiFailure;
   const knownError =
     error instanceof QuantResearchError ||
     error instanceof QuantMarketDataError ||
@@ -462,6 +583,16 @@ function getWatchlist(user: User): Array<{ symbol: string; name: string }> {
       : undefined;
   const parsed = PutAccountWatchlistBody.shape.watchlist.safeParse(candidate);
   return parsed.success ? parsed.data : [];
+}
+
+function getEtfHoldings(user: User): Array<{ symbol: string; shares: number }> {
+  const metadata = user.privateMetadata[APP_METADATA_KEY];
+  const candidate =
+    metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? (metadata as Record<string, unknown>).etfHoldings
+      : undefined;
+  const parsed = PutAccountWatchlistBody.shape.etfHoldings.safeParse(candidate);
+  return parsed.success ? parsed.data ?? [] : [];
 }
 
 function getInvitationRedirectUrl(req: Request): string {
@@ -640,6 +771,128 @@ function requireAdmin(
 
 router.use(requireAccountAccess);
 
+router.get("/account/research-jobs", async (req, res): Promise<void> => {
+  try {
+    const userId = getAuth(req).userId;
+    if (!userId) {
+      res.status(401).json({ error: "請先登入。" });
+      return;
+    }
+    const user = await clerkClient.users.getUser(userId);
+    const jobs = await listResearchJobs(userId);
+    res.json(jobs.map(({ id, channel, question, status, answer, agents, createdAt, updatedAt }) => ({
+      id, channel, question, status, answer, agents, createdAt, updatedAt,
+    })));
+  } catch (error) {
+    req.log.error({ err: error }, "Unable to list CEO research jobs");
+    res.status(503).json({ error: "研究任務目前無法載入，請稍後重試。" });
+  }
+});
+
+router.get("/account/stock-research-agents", async (req, res): Promise<void> => {
+  try {
+    const userId = getAuth(req).userId!;
+    const agents = await listStockResearchAgents(userId);
+    res.json(GetAccountStockResearchAgentsResponse.parse(agents));
+  } catch (error) {
+    req.log.error({ err: error }, "Unable to list stock research agents");
+    res.status(503).json({ error: "個股研究 Agent 暫時無法載入。" });
+  }
+});
+
+router.post("/account/stock-research-agents", async (req, res): Promise<void> => {
+  const parsed = CreateAccountStockResearchAgentBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  try {
+    const symbol = parsed.data.symbol.trim().toUpperCase();
+    const catalog = await getStockCatalog();
+    const instrument = catalog.instruments.find((item) => item.symbol === symbol);
+    if (!instrument) {
+      res.status(400).json({ error: "找不到此台股或 ETF 代碼，請確認代碼後再試。" });
+      return;
+    }
+    const agent = await createStockResearchAgent({
+      userId: getAuth(req).userId!,
+      symbol,
+      name: instrument.name,
+      mission: parsed.data.mission.trim(),
+    });
+    res.status(201).json(CreateAccountStockResearchAgentResponse.parse(agent));
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "23505") {
+      res.status(409).json({ error: "這個帳號已為該標的建立研究 Agent。" });
+      return;
+    }
+    req.log.error({ err: error }, "Unable to create stock research agent");
+    res.status(503).json({ error: "建立個股研究 Agent 失敗，請稍後重試。" });
+  }
+});
+
+router.patch("/account/stock-research-agents/:agentId", async (req, res): Promise<void> => {
+  const params = UpdateAccountStockResearchAgentParams.safeParse(req.params);
+  const body = UpdateAccountStockResearchAgentBody.safeParse(req.body);
+  if (!params.success || !body.success) {
+    res.status(400).json({ error: "Agent 更新資料無效。" });
+    return;
+  }
+  try {
+    const agent = await setStockResearchAgentEnabled(
+      getAuth(req).userId!, params.data.agentId, body.data.enabled,
+    );
+    if (!agent) {
+      res.status(404).json({ error: "找不到這個研究 Agent。" });
+      return;
+    }
+    res.json(UpdateAccountStockResearchAgentResponse.parse(agent));
+  } catch (error) {
+    req.log.error({ err: error }, "Unable to update stock research agent");
+    res.status(503).json({ error: "更新研究 Agent 失敗。" });
+  }
+});
+
+router.post("/account/stock-research-agents/:agentId/run", async (req, res): Promise<void> => {
+  const params = RunAccountStockResearchAgentParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: "Agent ID 無效。" });
+    return;
+  }
+  try {
+    const agent = await setStockResearchAgentEnabled(
+      getAuth(req).userId!, params.data.agentId, true,
+    );
+    if (!agent) {
+      res.status(404).json({ error: "找不到這個研究 Agent。" });
+      return;
+    }
+    res.json(RunAccountStockResearchAgentResponse.parse(agent));
+  } catch (error) {
+    req.log.error({ err: error }, "Unable to queue stock research agent");
+    res.status(503).json({ error: "無法排入研究，請稍後重試。" });
+  }
+});
+
+router.delete("/account/stock-research-agents/:agentId", async (req, res): Promise<void> => {
+  const params = DeleteAccountStockResearchAgentParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: "Agent ID 無效。" });
+    return;
+  }
+  try {
+    const deleted = await deleteStockResearchAgent(getAuth(req).userId!, params.data.agentId);
+    if (!deleted) {
+      res.status(404).json({ error: "找不到這個研究 Agent。" });
+      return;
+    }
+    res.status(204).end();
+  } catch (error) {
+    req.log.error({ err: error }, "Unable to delete stock research agent");
+    res.status(503).json({ error: "刪除研究 Agent 失敗。" });
+  }
+});
+
 router.post(
   "/admin/web-search-diagnostic",
   requireAdmin,
@@ -777,6 +1030,7 @@ router.get(
       email: account.email,
       isAdmin: account.isAdmin,
       watchlist: getWatchlist(account.user),
+      etfHoldings: getEtfHoldings(account.user),
       maxWatchlistItems: WATCHLIST_LIMIT,
     });
     res.json(response);
@@ -809,6 +1063,17 @@ router.put(
       res.status(400).json({ error: "自選清單不可重複加入同一檔股票。" });
       return;
     }
+    const etfHoldings = parsed.data.etfHoldings?.map((holding) => ({
+      symbol: holding.symbol.trim().toUpperCase(),
+      shares: holding.shares,
+    }));
+    if (
+      etfHoldings &&
+      new Set(etfHoldings.map((holding) => holding.symbol)).size !== etfHoldings.length
+    ) {
+      res.status(400).json({ error: "ETF 持倉不可重複。" });
+      return;
+    }
 
     try {
       const currentAppMetadata = account.user.privateMetadata[APP_METADATA_KEY];
@@ -818,7 +1083,11 @@ router.put(
           : {};
       const updatedUser = await clerkClient.users.updateUserMetadata(account.user.id, {
         privateMetadata: {
-          [APP_METADATA_KEY]: { ...appMetadata, watchlist: normalized },
+          [APP_METADATA_KEY]: {
+            ...appMetadata,
+            watchlist: normalized,
+            ...(etfHoldings ? { etfHoldings } : {}),
+          },
         },
       });
       res.json(
@@ -827,6 +1096,7 @@ router.put(
           email: account.email,
           isAdmin: account.isAdmin,
           watchlist: getWatchlist(updatedUser),
+          etfHoldings: getEtfHoldings(updatedUser),
           maxWatchlistItems: WATCHLIST_LIMIT,
         }),
       );
@@ -916,9 +1186,10 @@ router.delete(
   },
 );
 
-router.post(
-  "/account/quant-research/interpret",
-  async (req: Request, res: Response<unknown, AccountLocals>): Promise<void> => {
+const handleQuantResearchInterpret = async (
+  req: Request,
+  res: Response<unknown, AccountLocals>,
+): Promise<void> => {
     const account = res.locals.account;
     if (!account) {
       res.status(401).json({ error: "請先登入。" });
@@ -942,8 +1213,10 @@ router.post(
     } catch (error) {
       sendQuantOperationError(req, res, error, "AI 暫時無法判讀研究假設，請稍後重試。");
     }
-  },
-);
+};
+
+router.post("/account/quant-research/interpret", handleQuantResearchInterpret);
+router.post("/account/quant-research-interpret", handleQuantResearchInterpret);
 
 router.post(
   "/account/quant-research/stream",

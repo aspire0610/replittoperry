@@ -7,24 +7,98 @@ import {
   answerTaiwanStockLotQuestion,
   isTaiwanBroadMarketQuestion,
   isTaiwanMarketActionFollowUp,
+  isTaiwanMarketForecastQuestion,
+  isTaiwanMarketTimingQuestion,
   isTaiwanStockActionQuestion,
+  isTaiwanStockContextFollowUp,
+  isTaiwanStockRecommendationQuestion,
   isTaiwanStockMovementReasonFollowUp,
   isTaiwanStockMovementReasonQuestion,
   isTaiwanStockQuoteQuestion,
+  mentionsTaiwanStockName,
   extractTaiwanStockSymbol,
   MAX_ASSISTANT_CHAT_ANSWER_LENGTH,
   parseAssistantChatOutput,
+  shouldDispatchResearchAgents,
   shouldSearchWeb,
 } from "./assistant-chat-utils.ts";
+import { buildLineResearchSeatContext } from "./research-seat-context.ts";
+
+test("LINE research seat context matches ticker/name and carries report date without using failed reports", () => {
+  const context = buildLineResearchSeatContext(
+    [{
+      symbol: "00919",
+      name: "群益台灣精選高息",
+      mission: "追蹤配息與風險",
+      reports: [
+        { status: "failed", marketDate: null, asOf: "2026-10-19T00:00:00.000Z", answer: "timeout" },
+        {
+          status: "completed",
+          marketDate: "2026-10-16",
+          asOf: "2026-10-16T07:35:00.000Z",
+          answer: "觀察配息來源與成分股集中風險。",
+          assessment: { context: { sources: ["官方行情"] } },
+        },
+      ],
+    }],
+    "那它最近的研究報告呢？",
+    [{ role: "user", content: "00919 近期配息與風險分析" }],
+  );
+  assert.match(context ?? "", /00919/u);
+  assert.match(context ?? "", /2026-10-16/u);
+  assert.match(context ?? "", /官方行情/u);
+  assert.match(context ?? "", /最近一次執行：失敗/u);
+  assert.doesNotMatch(context ?? "", /timeout/u);
+});
+
+test("LINE does not load an unrelated account's seat context", () => {
+  const context = buildLineResearchSeatContext(
+    [{
+      symbol: "2330",
+      name: "台積電",
+      mission: "追蹤",
+      reports: [{ status: "completed", marketDate: "2026-10-16", asOf: "2026-10-16T00:00:00.000Z", answer: "報告" }],
+    }],
+    "今天的天氣如何？",
+    [],
+  );
+  assert.equal(context, null);
+});
 
 test("detects Taiwan broad-market questions without treating unrelated questions as market requests", () => {
   assert.equal(isTaiwanBroadMarketQuestion("今天台股大盤如何？"), true);
   assert.equal(isTaiwanBroadMarketQuestion("櫃買指數漲跌家數"), true);
   assert.equal(isTaiwanBroadMarketQuestion("即時行情"), true);
   assert.equal(isTaiwanBroadMarketQuestion("目前行情如何？"), true);
+  assert.equal(isTaiwanBroadMarketQuestion("6223 盤勢分析"), false);
+  assert.equal(isTaiwanBroadMarketQuestion("旺矽盤勢分析"), false);
+  assert.equal(isTaiwanBroadMarketQuestion("台股盤勢分析"), true);
   assert.equal(isTaiwanBroadMarketQuestion("美股即時行情"), false);
   assert.equal(isTaiwanBroadMarketQuestion("台股交易時間是幾點？"), false);
   assert.equal(isTaiwanBroadMarketQuestion("寫一段旅行文案"), false);
+});
+
+test("recognizes Taiwan premarket and postmarket questions for market-data context", () => {
+  assert.equal(isTaiwanMarketTimingQuestion("今天台股盤前怎麼看？"), true);
+  assert.equal(isTaiwanMarketTimingQuestion("今日大盤盤後分析"), true);
+  assert.equal(isTaiwanMarketTimingQuestion("盤前摘要"), true);
+  assert.equal(isTaiwanMarketTimingQuestion("6223 盤後分析"), false);
+  assert.equal(isTaiwanMarketTimingQuestion("旺矽盤後分析"), false);
+  assert.equal(isTaiwanMarketTimingQuestion("美股盤前分析"), false);
+  assert.equal(isTaiwanMarketTimingQuestion("台股交易時間是幾點？"), false);
+});
+
+test("recognizes next-session market direction questions and excludes ticker questions", () => {
+  assert.equal(isTaiwanMarketForecastQuestion("明天開盤會漲嗎？"), true);
+  assert.equal(isTaiwanMarketForecastQuestion("明天台股會漲嗎？"), true);
+  assert.equal(isTaiwanMarketForecastQuestion("下個交易日台股偏多還是偏空？"), true);
+  assert.equal(isTaiwanMarketForecastQuestion("下週大盤會漲還是跌？"), true);
+  assert.equal(isTaiwanMarketForecastQuestion("開盤走勢"), true);
+  assert.equal(isTaiwanMarketForecastQuestion("開盤趨勢怎麼看？"), true);
+  assert.equal(isTaiwanMarketForecastQuestion("明天 2330 會漲嗎？"), false);
+  assert.equal(isTaiwanMarketForecastQuestion("美股開盤走勢"), false);
+  assert.equal(isTaiwanMarketForecastQuestion("台股會跟美股開盤走勢嗎？"), true);
+  assert.equal(isTaiwanMarketForecastQuestion("明天會下雨嗎？"), false);
 });
 
 test("recognizes broad-market action follow-ups without confusing them with ticker questions", () => {
@@ -56,11 +130,54 @@ test("detects Taiwan stock quote and action questions and extracts numeric ticke
   assert.equal(isTaiwanStockQuoteQuestion("台積電現在多少？"), true);
   assert.equal(isTaiwanStockActionQuestion("台積電建議怎麼操作？"), true);
   assert.equal(isTaiwanStockActionQuestion("2330 可以買進嗎？"), true);
+  assert.equal(isTaiwanStockActionQuestion("今天 2449 可以買嗎？"), true);
+  assert.equal(isTaiwanStockActionQuestion("現在適合買 2449 嗎？"), true);
+  assert.equal(isTaiwanStockActionQuestion("6223 盤勢分析"), true);
+  assert.equal(isTaiwanStockActionQuestion("現在可以買嗎？"), true);
+  assert.equal(isTaiwanStockActionQuestion("現在可以買 2330 嗎？"), true);
+  assert.equal(isTaiwanStockActionQuestion("旺矽個股分析"), true);
+  assert.equal(isTaiwanStockActionQuestion("台積電最近怎麼樣？"), true);
+  assert.equal(isTaiwanStockActionQuestion("旺矽表現如何？"), true);
   assert.equal(isTaiwanStockQuoteQuestion("今天台股大盤行情"), false);
   assert.equal(isTaiwanStockActionQuestion("寫一段旅行文案"), false);
   assert.equal(extractTaiwanStockSymbol("請看 2330.TW 的成交價"), "2330");
   assert.equal(extractTaiwanStockSymbol("請看 0050 的行情"), "0050");
   assert.equal(extractTaiwanStockSymbol("今天 2026 年的行情"), null);
+});
+
+test("resolves common company aliases and natural follow-up wording", () => {
+  assert.equal(
+    mentionsTaiwanStockName(
+      "台積電最近怎麼樣？",
+      "台灣積體電路製造股份有限公司",
+      "2330",
+    ),
+    true,
+  );
+  assert.equal(
+    mentionsTaiwanStockName("旺矽建議操作", "旺矽科技股份有限公司", "6223"),
+    true,
+  );
+  assert.equal(
+    mentionsTaiwanStockName("科技股怎麼看", "旺矽科技股份有限公司", "6223"),
+    false,
+  );
+  assert.equal(isTaiwanStockContextFollowUp("那它現在可以買嗎？"), true);
+  assert.equal(isTaiwanStockContextFollowUp("這檔最近表現呢？"), true);
+  assert.equal(isTaiwanStockContextFollowUp("附近有什麼餐廳？"), false);
+});
+
+test("recognizes natural-language requests for short-horizon Taiwan stock picks", () => {
+  for (const question of [
+    "推薦幾支未來幾天會漲的股票",
+    "推薦未來幾天會漲能賺錢的股票",
+    "接下來一週買哪支台股？",
+    "幫我選股",
+    "找幾檔個股",
+  ]) {
+    assert.equal(isTaiwanStockRecommendationQuestion(question), true, question);
+  }
+  assert.equal(isTaiwanStockRecommendationQuestion("推薦台北餐廳"), false);
 });
 
 test("detects stock-movement cause questions and triggers current web research", () => {
@@ -128,12 +245,15 @@ test("labels Google News RSS search results and preserves their source links", a
       title: "測試新聞",
       url: "https://news.google.com/rss/articles/example",
       snippet: "公開 RSS 摘要",
+      publishedAt: "2026-10-21T02:00:00.000Z",
     }],
     "test-request",
     "google_news_rss",
   );
   assert.equal(result.status, "searched");
   assert.match(result.summary, /Google News RSS/);
+  assert.match(result.summary, /發布時間/u);
+  assert.match(result.summary, /台灣時間/u);
   assert.equal(result.provider, "google_news_rss");
   assert.equal(result.sources[0].url, "https://news.google.com/rss/articles/example");
 });
@@ -232,6 +352,74 @@ test("records an empty DuckDuckGo response as an empty result", async () => {
   });
 });
 
+test("uses Google News RSS when a stock-cause search returns no DuckDuckGo results", async () => {
+  const calls = [];
+  const question = "旺矽 6223 股價漲跌原因";
+  const result = await searchAssistantWeb(
+    question,
+    async (query) => {
+      calls.push("duckduckgo");
+      assert.equal(query, question);
+      return [];
+    },
+    "test-request",
+    "duckduckgo",
+    {
+      provider: "google_news_rss",
+      webSearch: async (query) => {
+        calls.push("google_news_rss");
+        assert.equal(query, question);
+        return [{
+          title: "旺矽相關新聞",
+          url: "https://news.google.com/rss/articles/example",
+          snippet: "測試用新聞摘要",
+        }];
+      },
+    },
+  );
+
+  assert.deepEqual(calls, ["duckduckgo", "google_news_rss"]);
+  assert.equal(result.status, "searched");
+  assert.equal(result.provider, "google_news_rss");
+  assert.match(result.summary, /Google News RSS/);
+  assert.deepEqual(result.diagnostic, {
+    provider: "google_news_rss",
+    outcome: "searched",
+    resultCount: 1,
+    attempts: [
+      { provider: "duckduckgo", outcome: "empty", resultCount: 0 },
+      { provider: "google_news_rss", outcome: "searched", resultCount: 1 },
+    ],
+  });
+});
+
+test("keeps both safe search diagnostics when DuckDuckGo fails and RSS is empty", async () => {
+  const result = await searchAssistantWeb(
+    "旺矽 6223 股價漲跌原因",
+    async () => { throw new Error("DuckDuckGo search returned HTTP 403"); },
+    "test-request",
+    "duckduckgo",
+    { provider: "google_news_rss", webSearch: async () => [] },
+  );
+
+  assert.equal(result.status, "unavailable");
+  assert.equal(result.summary, null);
+  assert.deepEqual(result.diagnostic, {
+    provider: "google_news_rss",
+    outcome: "empty",
+    resultCount: 0,
+    attempts: [
+      {
+        provider: "duckduckgo",
+        outcome: "failed",
+        failureKind: "http_error",
+        httpStatus: 403,
+      },
+      { provider: "google_news_rss", outcome: "empty", resultCount: 0 },
+    ],
+  });
+});
+
 test("reads ETF distributions from official-style table rows without turning blank amounts into zero", () => {
   const html = `
     <table><tbody>
@@ -285,6 +473,18 @@ test("web lookup follows current-information needs rather than small talk or cre
   assert.equal(shouldSearchWeb("What is the latest Taiwan CPI?"), true);
   assert.equal(shouldSearchWeb("你好"), false);
   assert.equal(shouldSearchWeb("幫我寫一首關於下雨的詩"), false);
+});
+
+test("only detailed research requests dispatch CEO research employees", () => {
+  assert.equal(shouldDispatchResearchAgents("台股6223近期短線分析"), true);
+  assert.equal(shouldDispatchResearchAgents("6223 可以買進嗎？"), true);
+  assert.equal(shouldDispatchResearchAgents("比較 0050 和 006208 的風險"), true);
+  assert.equal(shouldDispatchResearchAgents("00919 這兩天想要補倉"), true);
+  assert.equal(shouldDispatchResearchAgents("研究最近半導體產業趨勢"), true);
+  assert.equal(shouldDispatchResearchAgents("你好"), false);
+  assert.equal(shouldDispatchResearchAgents("0050 現在價格多少？"), false);
+  assert.equal(shouldDispatchResearchAgents("台股 1 張等於幾股？"), false);
+  assert.equal(shouldDispatchResearchAgents("幫我寫一首雨天的詩"), false);
 });
 
 test("assistant answers are valid JSON, concise, and capped", () => {

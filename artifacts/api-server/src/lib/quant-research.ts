@@ -38,6 +38,10 @@ import {
   resolveQuantTickerFilter,
 } from "./quant-ticker-filter.js";
 import { parseRecurringContribution } from "./quant-recurring-investment.js";
+import {
+  calculateMonteCarloRisk,
+  createWalkForwardWindows,
+} from "./quant-validation.js";
 
 export class QuantResearchError extends Error {
   constructor(
@@ -228,13 +232,10 @@ export async function interpretQuantResearchHypothesis(
     allowedProviders: QUANT_RESEARCH_AI_PROVIDER_ORDER,
     geminiModels: QUANT_RESEARCH_GEMINI_MODELS,
     groqModel: QUANT_RESEARCH_GROQ_MODEL,
-    maxFallbackDurationMs: 48_000,
-    geminiTimeoutMs: 24_000,
-    geminiModelTimeoutMs: 12_000,
-    oneMinAiTimeoutMs: 12_000,
-    agnesAiTimeoutMs: 12_000,
-    groqTimeoutMs: 12_000,
-    ollamaTimeoutMs: 12_000,
+    maxFallbackDurationMs: 14_000,
+    groqTimeoutMs: 6_000,
+    geminiTimeoutMs: 10_000,
+    geminiModelTimeoutMs: 7_000,
     validateOutput: (text) =>
       parseQuantResearchInterpretation(extractJsonObject(text)) !== null,
   });
@@ -416,13 +417,10 @@ async function designQuantStrategy(
     allowedProviders: QUANT_RESEARCH_AI_PROVIDER_ORDER,
     geminiModels: QUANT_RESEARCH_GEMINI_MODELS,
     groqModel: QUANT_RESEARCH_GROQ_MODEL,
-    maxFallbackDurationMs: 48_000,
-    geminiTimeoutMs: 24_000,
-    geminiModelTimeoutMs: 12_000,
-    oneMinAiTimeoutMs: 12_000,
-    agnesAiTimeoutMs: 12_000,
-    groqTimeoutMs: 12_000,
-    ollamaTimeoutMs: 12_000,
+    maxFallbackDurationMs: 14_000,
+    groqTimeoutMs: 6_000,
+    geminiTimeoutMs: 10_000,
+    geminiModelTimeoutMs: 7_000,
     validateOutput: isUsableAiOutput,
     onProviderProgress: ({ message }) => {
       onProgress?.({ type: "progress", stage: "strategy", message });
@@ -663,6 +661,9 @@ export async function runQuantResearch(
   let timingComparison: NonNullable<
     QuantResearchResultDraft["timingComparison"]
   > | undefined;
+  let walkForward: NonNullable<QuantResearchResultDraft["walkForward"]> | undefined;
+  let parameterStability: NonNullable<QuantResearchResultDraft["parameterStability"]> | undefined;
+  let monteCarlo: NonNullable<QuantResearchResultDraft["monteCarlo"]> | undefined;
   let costStressBacktest: ReturnType<typeof calculateQuantBacktest>;
   let selectedStrategy = ai.strategy;
   const executionRebalance = plannedFrequency;
@@ -701,18 +702,20 @@ export async function runQuantResearch(
         ai.strategy.entryRule.conditions.find(
           (condition) => condition.factor === "momentum20",
         )?.threshold ?? 0;
-      const thresholds = [
-        Math.max(-0.99, originalThreshold - 0.05),
-        originalThreshold,
-        Math.min(3, originalThreshold + 0.05),
-      ];
-      const candidates = thresholds.map((threshold, index) => {
+      const thresholds = [-0.1, -0.05, 0, 0.05, 0.1].map((offset) =>
+        Math.max(-0.99, Math.min(3, originalThreshold + offset)),
+      );
+      const uniqueThresholds = [...new Set(thresholds)];
+      const candidates = uniqueThresholds.map((threshold, index) => {
         const preserved = ai.strategy.entryRule.conditions.filter(
           (condition) => condition.factor !== "momentum20",
         );
         return {
-          name: ["較早進場", "AI 基準", "較嚴格進場"][index]!,
-          entryRule: index === 1 ? ai.strategy.entryRule : {
+          name: Math.abs(threshold - originalThreshold) < 1e-9
+            ? "AI 基準"
+            : `${threshold > originalThreshold ? "+" : ""}${((threshold - originalThreshold) * 100).toFixed(0)} 個百分點`,
+          threshold,
+          entryRule: Math.abs(threshold - originalThreshold) < 1e-9 ? ai.strategy.entryRule : {
             mode: ai.strategy.entryRule.mode,
             conditions: [
               { factor: "momentum20" as const, operator: "gte" as const, threshold },
@@ -721,6 +724,92 @@ export async function runQuantResearch(
           } satisfies QuantSignalRule,
         };
       });
+      const grid: NonNullable<QuantResearchResultDraft["parameterStability"]>["grid"] = [];
+      for (const candidate of candidates) {
+        for (const rebalance of ["daily", "weekly", "monthly"] as const) {
+          const tested = calculateQuantBacktest({
+            snapshots: marketRange.snapshots,
+            requestedStartDate,
+            requestedEndDate: calibrationEndDate,
+            startingCapital: input.startingCapital,
+            topN: 1,
+            rebalance,
+            factorWeights: ai.strategy.factorWeights,
+            entryRule: candidate.entryRule,
+            exitRule: ai.strategy.exitRule,
+            tickerFilter,
+            sharesPerEntry,
+          });
+          grid.push({
+            threshold: candidate.threshold,
+            rebalance,
+            closedTradeCount: tested.metrics.closedTradeCount,
+            winRatePercent: tested.metrics.winRatePercent,
+            totalReturnPercent: tested.metrics.totalReturnPercent,
+            maxDrawdownPercent: tested.metrics.maxDrawdownPercent,
+          });
+        }
+      }
+      parameterStability = {
+        calibrationStartDate: stockDates[0]!,
+        calibrationEndDate,
+        thresholdFactor: "momentum20",
+        grid,
+      };
+      const foldCurves: Array<Array<{ equity: number }>> = [];
+      const folds = [];
+      for (const window of createWalkForwardWindows(stockDates, 3)) {
+        const trainingRuns = candidates.map((candidate) => ({
+          candidate,
+          tested: calculateQuantBacktest({
+            snapshots: marketRange.snapshots,
+            requestedStartDate,
+            requestedEndDate: window.trainEndDate,
+            startingCapital: input.startingCapital,
+            topN: 1,
+            rebalance: executionRebalance,
+            factorWeights: ai.strategy.factorWeights,
+            entryRule: candidate.entryRule,
+            exitRule: ai.strategy.exitRule,
+            tickerFilter,
+            sharesPerEntry,
+          }),
+        }));
+        const selectedForFold = [...trainingRuns]
+          .filter(({ tested: train }) => train.metrics.closedTradeCount >= 3 && train.metrics.winRatePercent !== null)
+          .sort((left, right) =>
+          (right.tested.metrics.winRatePercent ?? -1) - (left.tested.metrics.winRatePercent ?? -1) ||
+          right.tested.metrics.closedTradeCount - left.tested.metrics.closedTradeCount ||
+          right.tested.metrics.totalReturnPercent - left.tested.metrics.totalReturnPercent,
+          )[0] ?? trainingRuns.find(({ candidate }) => candidate.name === "AI 基準") ?? trainingRuns[0]!;
+        const tested = calculateQuantBacktest({
+          snapshots: marketRange.snapshots,
+          requestedStartDate: window.validationStartDate,
+          requestedEndDate: window.validationEndDate,
+          startingCapital: input.startingCapital,
+          topN: 1,
+          rebalance: executionRebalance,
+          factorWeights: ai.strategy.factorWeights,
+          entryRule: selectedForFold.candidate.entryRule,
+          exitRule: ai.strategy.exitRule,
+          tickerFilter,
+          sharesPerEntry,
+        });
+        foldCurves.push(tested.equityCurve);
+        folds.push({
+          ...window,
+          selectedThreshold: selectedForFold.candidate.threshold,
+          closedTradeCount: tested.metrics.closedTradeCount,
+          winRatePercent: tested.metrics.winRatePercent,
+          totalReturnPercent: tested.metrics.totalReturnPercent,
+          maxDrawdownPercent: tested.metrics.maxDrawdownPercent,
+        });
+      }
+      walkForward = { folds };
+      monteCarlo = calculateMonteCarloRisk(
+        foldCurves,
+        `${tickerFilter}:${requestedStartDate}:${endDate}:${ai.strategy.name}`,
+      );
       const calibration = candidates.map((candidate) => ({
         candidate,
         backtest: calculateQuantBacktest({
@@ -751,7 +840,7 @@ export async function runQuantResearch(
           right.backtest.metrics.totalReturnPercent -
             left.backtest.metrics.totalReturnPercent,
         );
-      const selected = ranked[0] ?? calibration[1]!;
+        const selected = ranked[0] ?? calibration.find(({ candidate }) => candidate.threshold === originalThreshold) ?? calibration[0]!;
       selectedStrategy = {
         ...ai.strategy,
         name: `${ai.strategy.name}｜${selected.candidate.name}`,
@@ -852,6 +941,9 @@ export async function runQuantResearch(
     rebalance: executionRebalance,
     strategy: selectedStrategy,
     ...(timingComparison ? { timingComparison } : {}),
+    ...(walkForward ? { walkForward } : {}),
+    ...(parameterStability ? { parameterStability } : {}),
+    ...(monteCarlo ? { monteCarlo } : {}),
     costStress: {
       slippagePercentPerSide: 0.1,
       costMultiplier: 2,

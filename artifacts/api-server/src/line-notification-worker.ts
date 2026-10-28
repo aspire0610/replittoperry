@@ -21,7 +21,6 @@ type LineSettings = {
   lineUserId?: string;
   alerts?: Alert[];
   openingNotice?: boolean;
-  closingSummary?: boolean;
 };
 type QuoteTick = { symbol: string; price: number; asOf: Date };
 type LinkedUser = { user: User; settings: LineSettings; symbols: Set<string> };
@@ -30,7 +29,6 @@ const latestTicks = new Map<string, QuoteTick>();
 const openingTicks = new Map<string, { date: string; tick: QuoteTick }>();
 const subscribedSymbols = new Set<string>();
 const lastOpeningNotice = new Map<string, string>();
-const lastClosingSummary = new Map<string, string>();
 const sentAlerts = new Set<string>();
 let socket: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -56,20 +54,6 @@ function toTaiwanDate(date = new Date()): string {
     month: "2-digit",
     day: "2-digit",
   }).format(date);
-}
-
-function isTaiwanMarketOpen(date = new Date()): boolean {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: MARKET_ZONE,
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(date);
-  const part = (name: string) => parts.find((item) => item.type === name)?.value ?? "";
-  const minute = Number(part("hour")) * 60 + Number(part("minute"));
-  return ["Mon", "Tue", "Wed", "Thu", "Fri"].includes(part("weekday")) &&
-    minute >= 9 * 60 && minute < 13 * 60 + 30;
 }
 
 function parseTimestamp(value: unknown): Date | null {
@@ -331,41 +315,39 @@ function connectStream(): void {
   });
 }
 
-async function sendDailyReports(): Promise<void> {
+async function sendOpeningNotices(): Promise<void> {
   const now = new Date();
-  if (!isTaiwanMarketOpen(now) && !["Mon", "Tue", "Wed", "Thu", "Fri"].includes(
-    new Intl.DateTimeFormat("en-US", { timeZone: MARKET_ZONE, weekday: "short" }).format(now),
-  )) return;
   const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: MARKET_ZONE, hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+    timeZone: MARKET_ZONE,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
   }).formatToParts(now);
-  const minute = Number(parts.find((part) => part.type === "hour")?.value) * 60 +
-    Number(parts.find((part) => part.type === "minute")?.value);
+  const part = (name: string) => parts.find((item) => item.type === name)?.value ?? "";
+  if (!["Mon", "Tue", "Wed", "Thu", "Fri"].includes(part("weekday"))) return;
+  const minute = Number(part("hour")) * 60 + Number(part("minute"));
   const today = toTaiwanDate(now);
+  const isOpen = minute >= 9 * 60 && minute < 9 * 60 + 10;
+  if (!isOpen) return;
+
   for (const account of users) {
-    if (!account.settings.lineUserId) continue;
-    const isOpen = minute >= 9 * 60 && minute < 9 * 60 + 10;
-    const isClose = minute >= 13 * 60 + 35 && minute < 13 * 60 + 45;
-    const enabled = isOpen ? account.settings.openingNotice : isClose ? account.settings.closingSummary : false;
-    const sent = isOpen ? lastOpeningNotice : lastClosingSummary;
-    if (!enabled || sent.get(account.user.id) === today) continue;
+    if (!account.settings.lineUserId || !account.settings.openingNotice) continue;
+    if (lastOpeningNotice.get(account.user.id) === today) continue;
     const lines = [...account.symbols]
-      .map((symbol) => isOpen ? openingTicks.get(symbol)?.tick : latestTicks.get(symbol))
+      .map((symbol) => openingTicks.get(symbol)?.tick)
       .filter((tick): tick is QuoteTick => {
         if (!tick || toTaiwanDate(tick.asOf) !== today) return false;
-        return isOpen
-          ? tick.asOf.getTime() >= new Date(`${today}T09:00:00+08:00`).getTime() &&
-            tick.asOf.getTime() < new Date(`${today}T09:10:00+08:00`).getTime()
-          : tick.asOf.getTime() < new Date(`${today}T13:31:00+08:00`).getTime();
+        return tick.asOf.getTime() >= new Date(`${today}T09:00:00+08:00`).getTime() &&
+          tick.asOf.getTime() < new Date(`${today}T09:10:00+08:00`).getTime();
       })
       .map((tick) => `${tick.symbol} ${tick.price.toLocaleString("zh-TW")} · ${tick.asOf.toLocaleTimeString("zh-TW", { timeZone: MARKET_ZONE, hour12: false })}`);
     if (lines.length === 0) continue;
-    sent.set(account.user.id, today);
-    const heading = isOpen ? "台股開盤首筆成交" : "台股收盤行情摘要（最後已驗證成交）";
-    try { await pushText(account.settings.lineUserId, `${heading}（${today}）\n${lines.join("\n")}\n成交時間以個別行情標示；未取得即時成交的標的略過。`); }
+    lastOpeningNotice.set(account.user.id, today);
+    try { await pushText(account.settings.lineUserId, `台股開盤首筆成交（${today}）\n${lines.join("\n")}\n成交時間以個別行情標示；未取得即時成交的標的略過。`); }
     catch (error) {
-      sent.delete(account.user.id);
-      logger.error({ err: error, userId: account.user.id }, "Unable to send LINE daily report");
+      lastOpeningNotice.delete(account.user.id);
+      logger.error({ err: error, userId: account.user.id }, "Unable to send LINE opening notice");
     }
   }
 }
@@ -388,7 +370,7 @@ export async function startLineNotificationWorker(): Promise<void> {
             sendStreamMessage({ event: "subscribe", data: { channel: "aggregates", symbol } });
           }
         }
-        await sendDailyReports();
+        await sendOpeningNotices();
       } catch (error) {
         logger.error({ err: error }, "LINE notification worker cycle failed");
       }

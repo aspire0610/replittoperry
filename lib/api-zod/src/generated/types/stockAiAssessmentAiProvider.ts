@@ -20,4 +20,6 @@ export const StockAiAssessmentAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   gemini: 'gemini',
+  nvidia_nim: 'nvidia_nim',
+  rule_based: 'rule_based',
 } as const;

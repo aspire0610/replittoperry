@@ -14,6 +14,7 @@ test("parses safe Google News RSS entries, decodes XML and limits results", () =
       <title><![CDATA[台股 &amp; 市場 ${index}]]></title>
       <link>https://news.google.com/rss/articles/${index}</link>
       <description><![CDATA[<a>來源</a>：摘錄 &amp; 摘要 ${index}]]></description>
+      <pubDate>Wed, 21 Oct 2026 02:00:00 GMT</pubDate>
     </item>
   `).join("");
   const parsed = parseGoogleNewsRss(`<rss><channel>${entries}</channel></rss>`);
@@ -22,6 +23,7 @@ test("parses safe Google News RSS entries, decodes XML and limits results", () =
   assert.equal(parsed[0].title, "台股 & 市場 0");
   assert.equal(parsed[0].snippet, "來源：摘錄 & 摘要 0");
   assert.equal(parsed[0].url, "https://news.google.com/rss/articles/0");
+  assert.equal(parsed[0].publishedAt, "2026-10-21T02:00:00.000Z");
 });
 
 test("rejects unsafe links and duplicate RSS entries", () => {

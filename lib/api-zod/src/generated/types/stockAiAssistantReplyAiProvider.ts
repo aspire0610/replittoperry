@@ -17,4 +17,5 @@ export const StockAiAssistantReplyAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   gemini: 'gemini',
+  nvidia_nim: 'nvidia_nim',
 } as const;

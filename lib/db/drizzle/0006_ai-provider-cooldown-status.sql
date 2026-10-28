@@ -1,0 +1,1 @@
+ALTER TABLE "ai_provider_cooldowns" ADD COLUMN "cooldown_status" integer;

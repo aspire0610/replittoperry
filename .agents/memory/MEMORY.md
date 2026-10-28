@@ -1,0 +1,39 @@
+- [Streamlit first-run prompt](streamlit-startup.md) — a fresh Streamlit CLI can wait for an optional email; pipe a blank line so the workflow opens its port.
+- [Taiwan market data providers](taiwan-market-data.md) — Preserve source coverage; MIS `all_etf.txt` carries issuer-estimated ETF NAV and per-fund timestamps, distinct from official closing prices.
+- [AI-driven financial action guidance](financial-ai-safety.md) — use verifiable evidence; market-wide technical indicators and scenarios are computed locally before AI's final selection.
+- [AI provider policy](ai-provider-policy.md) — Groq is the second fallback across site features; LINE uses public news RSS as a free, non-guaranteed search source.
+- [AI provider workflow restarts](ai-provider-workflow-restarts.md) — restarting API may trigger preview AI calls and consume provider credits; use mocked tests for validation.
+- [AI CEO scope](floating-assistant-scope.md) — replace the general assistant with a CEO that delegates stock research across dashboard and LINE.
+- [Perplexity Agent API](perplexity-agent-api.md) — current Perplexity structured-output calls use the Agent API response envelope, not Chat Completions choices.
+- [Recharts errorbar rendering](recharts-errorbar.md) — avoid zero-length ErrorBars; coincident endpoints can produce duplicate React child keys.
+- [Vercel API routing](vercel-api-routing.md) — keep SPA fallbacks off `/api/*` and smoke-test grouped API routes in production.
+- [Vercel runtime log streams](vercel-runtime-logs.md) — correlate verified deployments; fixed sanitized console markers survive Pino filtering, and status `-1` is not final.
+- [Vercel environment checks](vercel-env-checks.md) — unset inherited Replit values; sensitive Vercel vars may be omitted from CLI pulls, so verify without exposing them.
+- [Neon migration ledger](production-migration-ledger.md) — production Drizzle history once lagged behind existing schema; verify exact DDL before backfilling it.
+- [Vercel deployment access](vercel-deployment-access.md) — Git branch, production deployment, and alias are distinct; verify the active production target and alias, not commit metadata alone.
+- [Account hosting policy](account-hosting-policy.md) — production stays on Vercel with SSO protection, invite-only Clerk accounts, and existing role checks.
+- [LINE account binding](line-account-binding.md) — distinct dashboard accounts should be able to bind distinct LINE identities; settings are account-scoped.
+- [LINE summary scheduling](line-summary-scheduling.md) — use GitHub Actions Free for scheduled summaries; preserve Vercel SSO and keep bypass credentials out of code and URLs.
+- [LINE chat and summary formatting](line-assistant-experience.md) — individual-stock analysis includes verified price, concise AI reasoning and action direction; closing summaries use compact sections.
+- [Admin account deletion](admin-account-deletion.md) — user-management removal means permanent Clerk deletion, with explicit confirmation and protection for administrator accounts.
+- [External worker and scan DB boundaries](replit-worker-deployment.md) — Keep LINE/Fugle hosting on its chosen external host, but verify the scan worker's DB identity separately.
+- [Account conversation storage](account-conversation-storage.md) — keep production on a separate Neon database; Vercel needs its pooled DATABASE_URL and authenticated CRUD verification.
+- [Clerk API middleware scope](clerk-api-middleware-scope.md) — mount Clerk before account and admin routers while leaving public market APIs outside that auth middleware.
+- [Vercel API documentation access](vercel-api-docs-access.md) — if Replit web-search/fetch callbacks fail with 402, public Vercel docs may still be reachable with curl.
+- [GitHub workflow edits](github-workflow-edits.md) — when GitHub Contents API returns proxy HTML 403, use the Git Database API after verifying the branch head and blob.
+- [Vercel function duration](vercel-function-duration.md) — verify the current Hobby and Fluid Compute limits before diagnosing AI request timeouts.
+- [DuckDuckGo production egress](duckduckgo-production-egress.md) — production Vercel search received HTTP 403; treat it as an access restriction, not a parser failure.
+- [API source test loading](api-source-test-loading.md) — API TypeScript source uses .js imports; native Node tests need built output or a TypeScript-aware loader.
+- [OpenAPI SSE codegen](openapi-sse-codegen.md) — keep negotiated SSE response details in descriptions when Orval rejects multiple response content types.
+- [AI verdict timestamps](ai-verdict-timestamps.md) — show stock/price-matched verdicts with their own source time; a different in-memory analysis timestamp alone should not hide them.
+- [Quant research scope](quant-research-scope.md) — require confirmation of AI-interpreted conditions before backtests; keep recurring contribution amounts separate from their cumulative caps.
+- [Replit mobile preview width](replit-mobile-preview-width.md) — distinguish app viewport sizing from the Replit in-app preview frame before changing mobile widths.
+- [Dashboard card ordering](dashboard-card-layout.md) — homepage order uses compact up/down buttons; reset old custom order while preserving collapsed cards.
+- [Dashboard light palette](dashboard-light-palette.md) — glacier-blue pages use translucent glass cards with visible cool-blue edges and reflective highlights.
+- [Dashboard UX priorities](dashboard-ux-priorities.md) — make stock decisions fast and direct, reduce scrolling, and keep detailed evidence available.
+- [Programmatic and AI-pick validation](historical-ai-stock-validation.md) — keep full-history code backtests distinct from prospectively settled AI picks; hide measured rates until samples are adequate.
+- [AI request rate limits](ai-request-rate-limits.md) — keep a per-client overall ceiling and separate per-operation limits so dashboard traffic does not make unrelated AI features reject each other.
+- [Market-wide scan integrity](market-wide-scan-integrity.md) — allow verified-subset picks with explicit partial coverage; never claim an incomplete scan ranks the whole market.
+- [AI day-trade screening](ai-day-trade-screening.md) — use intraday liquidity/time gates; after-hours AI picks are next-session watchlists, not same-day trade calls.
+- [ETF dividend estimates](etf-dividend-estimates.md) — rank by trailing 12-month cash distributions divided by latest official close; keep saved holdings account-private.
+- [Market checklist evidence](market-checklist-evidence.md) — only show queried market signals, preserve each source’s data date, and mark missing or unverified events as unavailable.

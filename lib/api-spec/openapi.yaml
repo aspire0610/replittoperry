@@ -92,7 +92,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MarketSummary"
+                $ref: "#/components/schemas/MarketSummaryResponse"
         "502":
           description: Market data provider unavailable
           content:
@@ -105,6 +105,14 @@ paths:
       tags: [market]
       summary: Get today's AI pre-market summary
       description: Combines the latest TAIEX quote, official historical technical indicators, and recent web-search news leads. Quote and news timestamps are returned for context.
+      parameters:
+        - name: mode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [premarket, closing]
+            default: premarket
       responses:
         "200":
           description: AI daily market summary or an explicit unavailable result
@@ -128,8 +136,8 @@ paths:
     get:
       operationId: getMarketIntraday
       tags: [market]
-      summary: Get the current TAIEX session's one-minute candles
-      description: Returns verified one-minute TAIEX candles from the session open through the latest available candle.
+      summary: Get the latest available TAIEX one-minute session
+      description: Returns verified one-minute TAIEX candles from the live session when available; if live candles are empty, returns the latest official historical trading session and identifies it as historical.
       responses:
         "200":
           description: TAIEX intraday history
@@ -234,6 +242,102 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /etfs/market:
+    get:
+      operationId: getEtfMarket
+      tags: [stocks]
+      summary: Get Taiwan ETFs with prices and trailing-year distributions
+      responses:
+        "200":
+          description: ETF market data and recent distribution history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EtfMarket"
+        "502":
+          description: Official ETF or market data is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /stocks/ai-picks/progress:
+    get:
+      operationId: getStockAiPicksProgress
+      tags: [stocks]
+      summary: Get live progress for the current Taiwan market scan
+      responses:
+        "200":
+          description: Current full-market scan stage and completed work
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockAiPicksProgress"
+  /stocks/ai-picks/scan-jobs:
+    post:
+      operationId: startStockAiPicksScanJob
+      tags: [stocks]
+      summary: Start or reuse the active scan, or manually rerun the daily stock filter
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarketWideAiPickScanRequest"
+      responses:
+        "202":
+          description: Scan job accepted or already running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketWideAiPickScanJob"
+  /stocks/ai-picks/scan-jobs/{jobId}:
+    get:
+      operationId: getStockAiPicksScanJob
+      tags: [stocks]
+      summary: Get full-market AI scan progress and result
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Current scan job state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketWideAiPickScanJob"
+        "404":
+          description: Scan job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /stocks/ai-picks:
+    get:
+      operationId: getStockAiPicks
+      tags: [stocks]
+      summary: Scan the Taiwan market for AI stock candidates
+      description: Screens official listed and OTC daily reports, summarizes market breadth, and returns evidence-based AI research candidates. Direction estimates are subjective, uncalibrated, and not historical strategy win rates.
+      responses:
+        "200":
+          description: Market scan and shortlisted candidates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockAiPicks"
+        "429":
+          description: AI request rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Market data or AI provider unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /stocks/research-data:
     get:
       operationId: getStockResearchData
@@ -306,6 +410,43 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "429":
           description: AI assessment rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /stocks/ai-historical-validation:
+    post:
+      operationId: runStockAiHistoricalValidationBatch
+      tags: [stocks]
+      summary: Run the next batch of isolated AI historical forecasts for one stock
+      description: Uses official historical daily bars and non-overlapping five-trading-day windows. Each AI forecast sees only data available on its forecast date; future bars are used only for settlement. Progress is persisted and can be resumed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StockAiHistoricalValidationInput"
+      responses:
+        "200":
+          description: 'Historical validation progress and qualification status. Send Accept: text/event-stream to receive server-sent progress events, followed by a completion or error event.'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockAiHistoricalValidationProgress"
+        "400":
+          description: Invalid Taiwan stock symbol
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: AI historical validation batch rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Official market data or AI provider unavailable
           content:
             application/json:
               schema:
@@ -455,6 +596,158 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Account has not been invited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /account/research-jobs:
+    get:
+      operationId: getAccountResearchJobs
+      tags: [account]
+      summary: List CEO research jobs
+      description: Returns the signed-in account's saved CEO research tasks, including tasks submitted through its linked LINE account.
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Saved research jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AiResearchJob"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Research storage unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /account/stock-research-agents:
+    get:
+      operationId: getAccountStockResearchAgents
+      tags: [account]
+      summary: List signed-in user's individual-stock research agents
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Saved stock research agents and recent reports
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AiStockResearchAgent"
+    post:
+      operationId: createAccountStockResearchAgent
+      tags: [account]
+      summary: Create a daily stock research agent
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiStockResearchAgentInput"
+      responses:
+        "201":
+          description: Created research agent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiStockResearchAgent"
+        "400":
+          description: Invalid symbol or mission
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Agent already exists for this stock
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /account/stock-research-agents/{agentId}:
+    patch:
+      operationId: updateAccountStockResearchAgent
+      tags: [account]
+      summary: Pause or resume a stock research agent
+      security:
+        - clerkSession: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiStockResearchAgentUpdate"
+      responses:
+        "200":
+          description: Updated research agent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiStockResearchAgent"
+        "404":
+          description: Agent not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteAccountStockResearchAgent
+      tags: [account]
+      summary: Delete a stock research agent
+      security:
+        - clerkSession: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Agent deleted
+        "404":
+          description: Agent not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /account/stock-research-agents/{agentId}/run:
+    post:
+      operationId: runAccountStockResearchAgent
+      tags: [account]
+      summary: Queue an immediate stock research agent run
+      security:
+        - clerkSession: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Agent queued for research
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiStockResearchAgent"
+        "404":
+          description: Agent not found
           content:
             application/json:
               schema:
@@ -1375,6 +1668,37 @@ components:
         error:
           type: string
       required: [error]
+    StockAiHistoricalValidationInput:
+      type: object
+      additionalProperties: false
+      properties:
+        symbol:
+          type: string
+          pattern: "^[A-Za-z0-9]{4,6}(\\.(TW|TWO))?$"
+      required: [symbol]
+    StockAiHistoricalValidationProgress:
+      type: object
+      additionalProperties: false
+      properties:
+        symbol: { type: string }
+        status: { type: string, enum: [collecting, qualified, not_qualified, insufficient_history] }
+        processedForecastCount: { type: integer, minimum: 0 }
+        requiredForecastCount: { type: integer, minimum: 0 }
+        directionSampleCount: { type: integer, minimum: 0 }
+        directionCorrectCount: { type: integer, minimum: 0 }
+        programBaselineSampleCount: { type: integer, minimum: 0 }
+        programBaselineCorrectCount: { type: integer, minimum: 0 }
+        programBaselineHitRatePercent: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        calibrationSampleCount: { type: integer, minimum: 0 }
+        meanForecastProbabilityPercent: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        calibrationGapPercent: { type: ["number", "null"], minimum: -100, maximum: 100 }
+        directionLowerBoundPercent: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        pricePlanSampleCount: { type: integer, minimum: 0 }
+        pricePlanTargetFirstCount: { type: integer, minimum: 0 }
+        pricePlanLowerBoundPercent: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        qualified: { type: boolean }
+        message: { type: string }
+      required: [symbol, status, processedForecastCount, requiredForecastCount, directionSampleCount, directionCorrectCount, programBaselineSampleCount, programBaselineCorrectCount, programBaselineHitRatePercent, calibrationSampleCount, meanForecastProbabilityPercent, calibrationGapPercent, directionLowerBoundPercent, pricePlanSampleCount, pricePlanTargetFirstCount, pricePlanLowerBoundPercent, qualified, message]
     FuturesAiDayStrategy:
       type: object
       required: [status, action, summary, entryCondition, invalidationCondition, riskNote, aiProvider, dataCoverage, dayQuote, nightQuote, taiexQuote, analyzedAt, disclaimer]
@@ -1399,7 +1723,7 @@ components:
           maxLength: 180
         aiProvider:
           type: ["string", "null"]
-          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, null]
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, nvidia_nim, null]
         dataCoverage:
           type: string
           enum: [quote_only, unavailable]
@@ -1466,6 +1790,52 @@ components:
         threshold:
           type: ["number", "null"]
       required: [key, label, passed, observedValue, threshold]
+    MarketChecklistSignal:
+      type: string
+      enum: [bullish, mixed, bearish, unavailable]
+    MarketChecklistItem:
+      type: object
+      properties:
+        key: { type: string }
+        label: { type: string }
+        signal:
+          $ref: "#/components/schemas/MarketChecklistSignal"
+        detail: { type: string, maxLength: 500 }
+        source: { type: ["string", "null"] }
+        observedAt: { type: ["string", "null"] }
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/MarketChecklistSource" }
+      required: [key, label, signal, detail, source, observedAt]
+    MarketChecklistSource:
+      type: object
+      properties:
+        title: { type: string, maxLength: 300 }
+        url: { type: string, format: uri }
+      required: [title, url]
+    MarketScenario:
+      type: object
+      properties:
+        label: { type: string }
+        condition: { type: string, maxLength: 300 }
+        implication: { type: string, maxLength: 300 }
+      required: [label, condition, implication]
+    MarketChecklist:
+      type: object
+      properties:
+        marketDate: { type: string, format: date }
+        analyzedAt: { type: string, format: date-time }
+        conclusion:
+          type: string
+          enum: [bullish, mixed, bearish, insufficient]
+        conclusionText: { type: string, maxLength: 300 }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/MarketChecklistItem" }
+        scenarios:
+          type: array
+          items: { $ref: "#/components/schemas/MarketScenario" }
+      required: [marketDate, analyzedAt, conclusion, conclusionText, items, scenarios]
     MarketSummary:
       type: object
       properties:
@@ -1509,6 +1879,14 @@ components:
           items:
             $ref: "#/components/schemas/MarketFactor"
       required: [ticker, source, asOf, currentPrice, change, changePercent, dailyCloseDate, dailyCloseSource, dailyClosePrice, dailyCloseChange, dailyCloseChangePercent, ma20, ma60, ma120, score, status, factors]
+    MarketSummaryResponse:
+      allOf:
+        - $ref: "#/components/schemas/MarketSummary"
+        - type: object
+          properties:
+            checklist:
+              $ref: "#/components/schemas/MarketChecklist"
+          required: [checklist]
     MarketAiDailySummary:
       type: object
       properties:
@@ -1535,7 +1913,7 @@ components:
           maxLength: 500
         aiProvider:
           type: ["string", "null"]
-          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, null]
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, nvidia_nim, null]
         analyzedAt:
           type: ["string", "null"]
           format: date-time
@@ -1618,6 +1996,9 @@ components:
         timeframe:
           type: string
           enum: ["1m"]
+        sessionType:
+          type: string
+          enum: ["live", "historical"]
         source:
           type: string
         previousClose:
@@ -1629,7 +2010,7 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MarketIntradayBar"
-      required: [ticker, date, timeframe, source, previousClose, asOf, bars]
+      required: [ticker, date, timeframe, sessionType, source, previousClose, asOf, bars]
     StockHistory:
       type: object
       properties:
@@ -1679,6 +2060,245 @@ components:
           type: string
           enum: [上市, 上櫃]
       required: [symbol, ticker, name, exchange, exchangeName]
+    EtfDistribution:
+      type: object
+      additionalProperties: false
+      properties:
+        exDividendDate: { type: string }
+        paymentDate: { type: string }
+        cashAmountPerUnit: { type: number, minimum: 0 }
+      required: [exDividendDate, paymentDate, cashAmountPerUnit]
+    EtfMarketInstrument:
+      type: object
+      additionalProperties: false
+      properties:
+        symbol: { type: string }
+        ticker: { type: string }
+        name: { type: string }
+        exchangeName: { type: string, enum: [上市, 上櫃] }
+        price: { type: ["number", "null"], minimum: 0 }
+        marketPrice: { type: ["number", "null"], minimum: 0 }
+        netAssetValue: { type: ["number", "null"], minimum: 0 }
+        discountPremiumAmount: { type: ["number", "null"] }
+        discountPremiumPercent: { type: ["number", "null"] }
+        navUpdatedAt: { type: ["string", "null"], format: date-time }
+        distributions:
+          type: array
+          items: { $ref: "#/components/schemas/EtfDistribution" }
+        trailing12MonthDividend: { type: number, minimum: 0 }
+        trailing12MonthYieldPercent: { type: ["number", "null"], minimum: 0 }
+        latestDistribution: { type: ["number", "null"], minimum: 0 }
+        frequency: { type: string }
+      required: [symbol, ticker, name, exchangeName, price, marketPrice, netAssetValue, discountPremiumAmount, discountPremiumPercent, navUpdatedAt, distributions, trailing12MonthDividend, trailing12MonthYieldPercent, latestDistribution, frequency]
+    EtfMarket:
+      type: object
+      additionalProperties: false
+      properties:
+        asOf: { type: string }
+        source: { type: string }
+        navDataStatus: { type: string, enum: [available, partial, unavailable] }
+        navDataUpdatedAt: { type: ["string", "null"], format: date-time }
+        instruments:
+          type: array
+          items: { $ref: "#/components/schemas/EtfMarketInstrument" }
+      required: [asOf, source, navDataStatus, navDataUpdatedAt, instruments]
+    StockAiPicksProgress:
+      type: object
+      additionalProperties: false
+      properties:
+        stage:
+          type: string
+          enum: [idle, market_data, preliminary, final_selection, candidate_analysis, complete, error]
+        percent: { type: integer, minimum: 0, maximum: 100 }
+        completedBatches: { type: integer, minimum: 0 }
+        failedBatches: { type: integer, minimum: 0 }
+        totalBatches: { type: integer, minimum: 0 }
+        scannedCount: { type: integer, minimum: 0 }
+        candidateCount: { type: integer, minimum: 0 }
+        completedCandidates: { type: integer, minimum: 0 }
+      required: [stage, percent, completedBatches, failedBatches, totalBatches, scannedCount, candidateCount, completedCandidates]
+    MarketWideAiPickScanJob:
+      type: object
+      additionalProperties: false
+      properties:
+        id: { type: integer, minimum: 1 }
+        status: { type: string, enum: [queued, running, completed, failed] }
+        stage: { type: string, enum: [idle, market_data, preliminary, final_selection, candidate_analysis, complete, error] }
+        percent: { type: integer, minimum: 0, maximum: 100 }
+        completedBatches: { type: integer, minimum: 0 }
+        failedBatches: { type: integer, minimum: 0 }
+        totalBatches: { type: integer, minimum: 0 }
+        scannedCount: { type: integer, minimum: 0 }
+        candidateCount: { type: integer, minimum: 0 }
+        completedCandidates: { type: integer, minimum: 0 }
+        result:
+          anyOf:
+            - $ref: "#/components/schemas/StockAiPicks"
+            - type: "null"
+        errorMessage: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      required: [id, status, stage, percent, completedBatches, failedBatches, totalBatches, scannedCount, candidateCount, completedCandidates, result, errorMessage, createdAt, updatedAt]
+    MarketWideAiPickScanRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        force:
+          type: boolean
+          description: Start a fresh scan even if a completed result exists for today.
+    StockAiPicks:
+      type: object
+      additionalProperties: false
+      properties:
+        marketDate: { type: string, format: date }
+        analyzedAt: { type: string, format: date-time }
+        source: { type: string }
+        marketSummary:
+          anyOf:
+            - $ref: "#/components/schemas/MarketSummary"
+            - type: "null"
+        marketIndexQuote:
+          $ref: "#/components/schemas/MarketQuote"
+        scannedCount: { type: integer, minimum: 0 }
+        candidateCount: { type: integer, minimum: 0 }
+        marketContextStatus: { type: string, enum: [complete, partial] }
+        marketContextNote: { type: string }
+        advances: { type: integer, minimum: 0 }
+        declines: { type: integer, minimum: 0 }
+        unchanged: { type: integer, minimum: 0 }
+        marketView: { type: string }
+        probabilityDefinition: { type: string }
+        riskNote: { type: string }
+        forwardValidation:
+          $ref: "#/components/schemas/MarketWideAiPickForwardValidation"
+        aiSelectionAttempted:
+          type: boolean
+          description: Whether a final AI selection batch was actually executed.
+        aiProvider:
+          type: string
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, nvidia_nim]
+        watchlist:
+          type: array
+          maxItems: 5
+          description: Separate non-qualified observation candidates; these are not AI picks or trade recommendations.
+          items:
+            $ref: "#/components/schemas/StockAiWatchlistCandidate"
+        picks:
+          type: array
+          maxItems: 30
+          items:
+            $ref: "#/components/schemas/StockAiPick"
+        dailyPendingChanges:
+          type: array
+          items:
+            $ref: "#/components/schemas/DailyPendingChange"
+      required: [marketDate, analyzedAt, source, marketSummary, marketIndexQuote, scannedCount, candidateCount, marketContextStatus, marketContextNote, advances, declines, unchanged, marketView, probabilityDefinition, riskNote, forwardValidation, aiProvider, picks]
+    StockAiWatchlistCandidate:
+      type: object
+      additionalProperties: false
+      properties:
+        symbol: { type: string }
+        name: { type: string }
+        referencePrice: { type: number, exclusiveMinimum: 0 }
+        failedStage:
+          type: string
+          enum: [historical_data, smc_signal, reward_to_risk, backtest]
+        failureReason: { type: string }
+        observation:
+          type: string
+          description: Specific verified conditions to monitor next; this is not an entry instruction.
+      required: [symbol, name, referencePrice, failedStage, failureReason]
+    DailyPendingChange:
+      type: object
+      additionalProperties: false
+      properties:
+        symbol: { type: string }
+        name: { type: string }
+        action: { type: string, enum: [continued, removed, added] }
+        detail: { type: string }
+      required: [symbol, name, action, detail]
+    MarketWideAiPickForwardValidation:
+      type: object
+      additionalProperties: false
+      properties:
+        status: { type: string, enum: [collecting, available, unavailable] }
+        horizonDays: { type: integer, const: 5 }
+        sampleCount: { type: integer, minimum: 0 }
+        correctCount: { type: integer, minimum: 0 }
+        hitRatePercent: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        lowerBoundPercent: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        upperBoundPercent: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        brierScore: { type: ["number", "null"], minimum: 0, maximum: 1 }
+        minimumSampleCount: { type: integer, minimum: 1 }
+        updatedAt: { type: ["string", "null"], format: date-time }
+        methodNote: { type: string }
+      required: [status, horizonDays, sampleCount, correctCount, hitRatePercent, lowerBoundPercent, upperBoundPercent, brierScore, minimumSampleCount, updatedAt, methodNote]
+    StockAiPick:
+      type: object
+      additionalProperties: false
+      properties:
+        symbol: { type: string }
+        ticker: { type: string }
+        name: { type: string }
+        close: { type: number, exclusiveMinimum: 0 }
+        change: { type: ["number", "null"] }
+        changePercent: { type: ["number", "null"] }
+        tradedValue: { type: number, minimum: 0 }
+        referencePrice: { type: number, exclusiveMinimum: 0 }
+        referenceChange: { type: ["number", "null"] }
+        referenceChangePercent: { type: ["number", "null"] }
+        referenceType: { type: string, enum: [verified_trade, official_daily_close] }
+        referenceAsOf: { type: ["string", "null"], format: date-time }
+        referenceSource: { type: string }
+        directionProbabilityPercent: { type: integer, minimum: 0, maximum: 95 }
+        aiDirectionProbabilityPercent: { type: integer, minimum: 0, maximum: 95 }
+        ruleHitRatePercent: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        ruleCorrectCount: { type: integer, minimum: 0 }
+        ruleSampleCount: { type: integer, minimum: 0 }
+        ruleLowerBoundPercent: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        ruleUpperBoundPercent: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        historicalValidationQualified: { type: boolean }
+        historicalAiDirectionHitRatePercent: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        historicalDirectionLowerBoundPercent: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        historicalDirectionSampleCount: { type: integer, minimum: 0 }
+        historicalAiPricePlanHitRatePercent: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        historicalPricePlanLowerBoundPercent: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        historicalPricePlanSampleCount: { type: integer, minimum: 0 }
+        cdpLevels:
+          anyOf:
+            - $ref: "#/components/schemas/StockAiPickCdpLevels"
+            - type: "null"
+        operationPlan:
+          type: object
+          additionalProperties: false
+          properties:
+            action: { type: string, enum: [wait_for_pullback, conditional_entry, no_trade] }
+            entryPrice: { type: ["number", "null"], minimum: 0 }
+            targetPrice: { type: ["number", "null"], minimum: 0 }
+            stopPrice: { type: ["number", "null"], minimum: 0 }
+            rewardToRisk: { type: ["number", "null"], minimum: 0 }
+          required: [action, entryPrice, targetPrice, stopPrice, rewardToRisk]
+        reason: { type: string }
+        probabilityEvidence: { type: string }
+        screeningReportMarkdown: { type: string }
+      required: [symbol, ticker, name, close, change, changePercent, tradedValue, referencePrice, referenceChange, referenceChangePercent, referenceType, referenceAsOf, referenceSource, directionProbabilityPercent, aiDirectionProbabilityPercent, ruleHitRatePercent, ruleCorrectCount, ruleSampleCount, ruleLowerBoundPercent, ruleUpperBoundPercent, historicalValidationQualified, historicalAiDirectionHitRatePercent, historicalDirectionLowerBoundPercent, historicalDirectionSampleCount, historicalAiPricePlanHitRatePercent, historicalPricePlanLowerBoundPercent, historicalPricePlanSampleCount, operationPlan, reason, probabilityEvidence, screeningReportMarkdown]
+    StockAiPickCdpLevels:
+      type: object
+      additionalProperties: false
+      properties:
+        referenceDate: { type: string, format: date }
+        cdp: { type: number, exclusiveMinimum: 0 }
+        ah: { type: number, exclusiveMinimum: 0 }
+        nh: { type: number, exclusiveMinimum: 0 }
+        nl: { type: number, exclusiveMinimum: 0 }
+        al: { type: number, exclusiveMinimum: 0 }
+        currentZone:
+          type: string
+          enum: [above_ah, ah_to_nh, nh_to_cdp, cdp_to_nl, nl_to_al, below_al]
+        openingZone:
+          type: ["string", "null"]
+          enum: [above_ah, ah_to_nh, nh_to_cdp, cdp_to_nl, nl_to_al, below_al, null]
+      required: [referenceDate, cdp, ah, nh, nl, al, currentZone, openingZone]
     StockResearchData:
       type: object
       additionalProperties: false
@@ -1863,6 +2483,56 @@ components:
           type: string
           maxLength: 600
       required: [status, source, updatedAt, minimumSampleCount, horizons, message, methodNote]
+    StockAiPricePlanValidation:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: [collecting, unavailable]
+        source:
+          type: string
+        updatedAt:
+          type: ["string", "null"]
+          format: date-time
+        minimumSampleCount:
+          type: integer
+          minimum: 1
+        forecastCount:
+          type: integer
+          minimum: 0
+        pendingCount:
+          type: integer
+          minimum: 0
+        targetFirstCount:
+          type: integer
+          minimum: 0
+        stopFirstCount:
+          type: integer
+          minimum: 0
+        noEntryCount:
+          type: integer
+          minimum: 0
+        ambiguousCount:
+          type: integer
+          minimum: 0
+        expiredCount:
+          type: integer
+          minimum: 0
+        resolvedTradeCount:
+          type: integer
+          minimum: 0
+        winRatePercent:
+          type: ["number", "null"]
+          minimum: 0
+          maximum: 100
+        message:
+          type: ["string", "null"]
+          maxLength: 240
+        methodNote:
+          type: string
+          maxLength: 600
+      required: [status, source, updatedAt, minimumSampleCount, forecastCount, pendingCount, targetFirstCount, stopFirstCount, noEntryCount, ambiguousCount, expiredCount, resolvedTradeCount, winRatePercent, message, methodNote]
     StockAiAssessment:
       type: object
       properties:
@@ -1872,7 +2542,7 @@ components:
           type: string
         aiProvider:
           type: ["string", "null"]
-          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, null]
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, nvidia_nim, rule_based, null]
         source:
           type: string
         quoteAsOf:
@@ -2162,6 +2832,47 @@ components:
                 type: number
                 exclusiveMinimum: 0
             required: [day, lowPrice, centralPrice, highPrice]
+        scorecard:
+          type: object
+          additionalProperties: false
+          properties:
+            earnedPoints: { type: integer, minimum: 0, maximum: 100 }
+            availablePoints: { type: integer, minimum: 0, maximum: 100 }
+            maximumPoints: { type: integer, const: 100 }
+            complete: { type: boolean }
+            note: { type: string, maxLength: 240 }
+            items:
+              type: array
+              maxItems: 12
+              items:
+                type: object
+                additionalProperties: false
+                properties:
+                  id: { type: string, maxLength: 40 }
+                  label: { type: string, maxLength: 80 }
+                  points: { type: ["integer", "null"], minimum: 0, maximum: 20 }
+                  maximumPoints: { type: integer, minimum: 1, maximum: 20 }
+                  status: { type: string, enum: [available, unavailable] }
+                  note: { type: string, maxLength: 240 }
+                required: [id, label, points, maximumPoints, status, note]
+          required: [earnedPoints, availablePoints, maximumPoints, complete, note, items]
+        tradeScenarios:
+          type: object
+          additionalProperties: false
+          properties:
+            referencePrice: { type: number, exclusiveMinimum: 0 }
+            supportPrice: { type: ["number", "null"], exclusiveMinimum: 0 }
+            resistancePrice: { type: ["number", "null"], exclusiveMinimum: 0 }
+            deepSupportPrice: { type: ["number", "null"], exclusiveMinimum: 0 }
+            directEntry:
+              $ref: "#/components/schemas/StockTradeScenario"
+            pullbackEntry:
+              $ref: "#/components/schemas/StockTradeScenario"
+            methodNote: { type: string, maxLength: 400 }
+          required: [referencePrice, supportPrice, resistancePrice, deepSupportPrice, directEntry, pullbackEntry, methodNote]
+        reportMarkdown:
+          type: string
+          maxLength: 5000
         historicalStrategyBacktest:
           type: object
           additionalProperties: false
@@ -2208,9 +2919,22 @@ components:
           required: [status, sampleCount, wins, winRatePercent, confidenceIntervalLowPercent, confidenceIntervalHighPercent, dataStartDate, dataEndDate, minimumSampleCount, minimumDataWindowDays, evaluationTradingDays, source]
         forwardDirectionValidation:
           $ref: "#/components/schemas/StockAiDirectionValidation"
+        pricePlanValidation:
+          $ref: "#/components/schemas/StockAiPricePlanValidation"
         disclaimer:
           type: string
-      required: [symbol, ticker, aiProvider, source, quoteAsOf, referencePrice, referenceType, analyzedAt, horizon, direction, biasLevel, confidence, summary, marketInfluence, marketSummary, signals, risks, webResearch, smcAnalysis, granvilleAnalysis, action, actionText, actionReferencePrice, actionReferenceLabel, actionReferenceReason, pricePlanStatus, entryPrice, entryReason, stopLossPrice, stopLossReason, takeProfitPrice, takeProfitReason, pricePlanMessage, forecastLowPrice, forecastPrice, forecastHighPrice, forecastReason, forecastPath, historicalStrategyBacktest, forwardDirectionValidation, disclaimer]
+      required: [symbol, ticker, aiProvider, source, quoteAsOf, referencePrice, referenceType, analyzedAt, horizon, direction, biasLevel, confidence, summary, marketInfluence, marketSummary, signals, risks, webResearch, smcAnalysis, granvilleAnalysis, action, actionText, actionReferencePrice, actionReferenceLabel, actionReferenceReason, pricePlanStatus, entryPrice, entryReason, stopLossPrice, stopLossReason, takeProfitPrice, takeProfitReason, pricePlanMessage, forecastLowPrice, forecastPrice, forecastHighPrice, forecastReason, forecastPath, scorecard, tradeScenarios, reportMarkdown, historicalStrategyBacktest, forwardDirectionValidation, pricePlanValidation, disclaimer]
+    StockTradeScenario:
+      type: object
+      additionalProperties: false
+      properties:
+        entryPrice: { type: ["number", "null"], exclusiveMinimum: 0 }
+        targetPrice: { type: ["number", "null"], exclusiveMinimum: 0 }
+        stopPrice: { type: ["number", "null"], exclusiveMinimum: 0 }
+        profitPercent: { type: ["number", "null"], minimum: 0 }
+        lossPercent: { type: ["number", "null"], minimum: 0 }
+        rewardToRisk: { type: ["number", "null"], minimum: 0 }
+      required: [entryPrice, targetPrice, stopPrice, profitPercent, lossPercent, rewardToRisk]
     StockAiBuyPriceInput:
       type: object
       additionalProperties: false
@@ -2243,7 +2967,7 @@ components:
           format: date-time
         aiProvider:
           type: string
-          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini]
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, nvidia_nim]
         verdict:
           type: string
           enum: [buy, do_not_buy]
@@ -2293,10 +3017,13 @@ components:
           type: string
         aiProvider:
           type: string
-          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini]
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, nvidia_nim]
         answer:
           type: string
           maxLength: 1600
+        positionAction:
+          type: string
+          enum: [add, hold, no_add, reduce, take_profit, stop_loss, exit, wait, insufficient]
         citedFacts:
           type: array
           maxItems: 5
@@ -2344,7 +3071,7 @@ components:
           format: date-time
         disclaimer:
           type: string
-      required: [symbol, ticker, answer, aiProvider, citedFacts, context, answeredAt, disclaimer]
+      required: [symbol, ticker, answer, positionAction, aiProvider, citedFacts, context, answeredAt, disclaimer]
     AssistantChatRequest:
       type: object
       additionalProperties: false
@@ -2387,6 +3114,116 @@ components:
           format: uri
           maxLength: 1000
       required: [title, url]
+    ResearchJobStatus:
+      type: string
+      enum: [queued, running, completed, failed]
+    ResearchAgentTask:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        specialty:
+          type: string
+        task:
+          type: string
+        status:
+          $ref: "#/components/schemas/ResearchJobStatus"
+        analysis:
+          type: string
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssistantChatSource"
+      required: [id, name, specialty, task, status, analysis, sources]
+    AiResearchJob:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        channel:
+          type: string
+          enum: [web, line]
+        question:
+          type: string
+        status:
+          $ref: "#/components/schemas/ResearchJobStatus"
+        answer:
+          type: string
+        agents:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchAgentTask"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required: [id, channel, question, status, answer, agents, createdAt, updatedAt]
+    AiStockResearchReport:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [completed, failed]
+        marketDate:
+          type: ["string", "null"]
+        asOf:
+          type: string
+          format: date-time
+        answer:
+          type: string
+        assessment:
+          type: object
+          additionalProperties: true
+        error:
+          type: string
+      required: [status, marketDate, asOf, answer]
+    AiStockResearchAgent:
+      type: object
+      properties:
+        id: { type: string }
+        symbol: { type: string }
+        name: { type: string }
+        mission: { type: string }
+        enabled: { type: boolean }
+        nextRunAt: { type: string, format: date-time }
+        lastRunAt:
+          type: ["string", "null"]
+          format: date-time
+        lastMarketDate:
+          type: ["string", "null"]
+        lastError:
+          type: ["string", "null"]
+        reports:
+          type: array
+          items:
+            $ref: "#/components/schemas/AiStockResearchReport"
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      required: [id, symbol, name, mission, enabled, nextRunAt, lastRunAt, lastMarketDate, lastError, reports, createdAt, updatedAt]
+    AiStockResearchAgentInput:
+      type: object
+      properties:
+        symbol:
+          type: string
+          minLength: 4
+          maxLength: 6
+          pattern: "^[A-Za-z0-9]{4,6}$"
+        mission:
+          type: string
+          minLength: 1
+          maxLength: 500
+      required: [symbol, mission]
+    AiStockResearchAgentUpdate:
+      type: object
+      properties:
+        enabled: { type: boolean }
+      required: [enabled]
     AssistantChatReply:
       type: object
       additionalProperties: false
@@ -2397,7 +3234,7 @@ components:
           maxLength: 420
         aiProvider:
           type: string
-          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, rule_based]
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, nvidia_nim, rule_based]
         searchStatus:
           type: string
           enum: [searched, not_needed, unavailable]
@@ -2459,7 +3296,7 @@ components:
           maxLength: 1800
         aiProvider:
           type: string
-          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, rule_based]
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, nvidia_nim, rule_based]
         citedFacts:
           type: array
           maxItems: 5
@@ -2562,7 +3399,9 @@ components:
           type: boolean
         premarketSummary:
           type: boolean
-      required: [linked, alerts, openingNotice, closingSummary, premarketSummary]
+        quantSignalAlerts:
+          type: boolean
+      required: [linked, alerts, openingNotice, closingSummary, premarketSummary, quantSignalAlerts]
     LineNotificationsUpdate:
       type: object
       additionalProperties: false
@@ -2578,7 +3417,9 @@ components:
           type: boolean
         premarketSummary:
           type: boolean
-      required: [alerts, openingNotice, closingSummary, premarketSummary]
+        quantSignalAlerts:
+          type: boolean
+      required: [alerts, openingNotice, closingSummary, premarketSummary, quantSignalAlerts]
     LineLinkCode:
       type: object
       additionalProperties: false
@@ -2589,6 +3430,13 @@ components:
           type: string
           format: date-time
       required: [code, expiresAt]
+    EtfHolding:
+      type: object
+      additionalProperties: false
+      properties:
+        symbol: { type: string, pattern: "^00[A-Z0-9]{2,4}$" }
+        shares: { type: integer, minimum: 1, maximum: 100000000 }
+      required: [symbol, shares]
     WatchlistUpdate:
       type: object
       additionalProperties: false
@@ -2598,6 +3446,11 @@ components:
           maxItems: 100
           items:
             $ref: "#/components/schemas/WatchlistEntry"
+        etfHoldings:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/EtfHolding"
       required: [watchlist]
     AccountProfile:
       type: object
@@ -2615,9 +3468,14 @@ components:
           maxItems: 100
           items:
             $ref: "#/components/schemas/WatchlistEntry"
+        etfHoldings:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/EtfHolding"
         maxWatchlistItems:
           type: integer
-      required: [userId, email, isAdmin, watchlist, maxWatchlistItems]
+      required: [userId, email, isAdmin, watchlist, etfHoldings, maxWatchlistItems]
     AdminUser:
       type: object
       additionalProperties: false
@@ -2662,7 +3520,7 @@ components:
       properties:
         provider:
           type: string
-          enum: [duckduckgo, brave, searxng]
+          enum: [duckduckgo, brave, searxng, google_news_rss]
         outcome:
           type: string
           enum: [searched, empty, failed]
@@ -2774,7 +3632,7 @@ components:
           $ref: "#/components/schemas/QuantStrategy"
         aiProvider:
           type: string
-          enum: [gemini, 1min_ai, agnes_ai, groq, ollama, openrouter, openai]
+          enum: [gemini, 1min_ai, agnes_ai, groq, ollama, openrouter, openai, nvidia_nim]
         summary:
           type: string
           minLength: 8
@@ -2937,7 +3795,7 @@ components:
         calibrationCandidates:
           type: array
           minItems: 3
-          maxItems: 3
+          maxItems: 5
           items: { $ref: "#/components/schemas/QuantTimingCandidateResult" }
         validation:
           type: object
@@ -2949,6 +3807,79 @@ components:
             maxDrawdownPercent: { type: number }
           required: [closedTradeCount, winRatePercent, totalReturnPercent, maxDrawdownPercent]
       required: [calibrationStartDate, calibrationEndDate, validationStartDate, validationEndDate, selectedCandidate, calibrationCandidates, validation]
+    QuantWalkForwardFold:
+      type: object
+      additionalProperties: false
+      properties:
+        index: { type: integer }
+        trainStartDate: { type: string, format: date }
+        trainEndDate: { type: string, format: date }
+        validationStartDate: { type: string, format: date }
+        validationEndDate: { type: string, format: date }
+        selectedThreshold: { type: number }
+        closedTradeCount: { type: integer }
+        winRatePercent: { type: ["number", "null"] }
+        totalReturnPercent: { type: number }
+        maxDrawdownPercent: { type: number }
+      required: [index, trainStartDate, trainEndDate, validationStartDate, validationEndDate, selectedThreshold, closedTradeCount, winRatePercent, totalReturnPercent, maxDrawdownPercent]
+    QuantWalkForward:
+      type: object
+      additionalProperties: false
+      properties:
+        folds:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items: { $ref: "#/components/schemas/QuantWalkForwardFold" }
+      required: [folds]
+    QuantParameterStabilityPoint:
+      type: object
+      additionalProperties: false
+      properties:
+        threshold: { type: number }
+        rebalance: { type: string, enum: [daily, weekly, monthly] }
+        closedTradeCount: { type: integer }
+        winRatePercent: { type: ["number", "null"] }
+        totalReturnPercent: { type: number }
+        maxDrawdownPercent: { type: number }
+      required: [threshold, rebalance, closedTradeCount, winRatePercent, totalReturnPercent, maxDrawdownPercent]
+    QuantParameterStability:
+      type: object
+      additionalProperties: false
+      properties:
+        calibrationStartDate: { type: string, format: date }
+        calibrationEndDate: { type: string, format: date }
+        thresholdFactor: { type: string }
+        grid:
+          type: array
+          minItems: 1
+          maxItems: 15
+          items: { $ref: "#/components/schemas/QuantParameterStabilityPoint" }
+      required: [calibrationStartDate, calibrationEndDate, thresholdFactor, grid]
+    QuantMonteCarloBucket:
+      type: object
+      additionalProperties: false
+      properties:
+        range: { type: string }
+        count: { type: integer }
+      required: [range, count]
+    QuantMonteCarlo:
+      type: object
+      additionalProperties: false
+      properties:
+        method: { type: string }
+        simulationCount: { type: integer }
+        sampledSessions: { type: integer }
+        probabilityOfLossPercent: { type: ["number", "null"] }
+        terminalReturnP05Percent: { type: ["number", "null"] }
+        terminalReturnMedianPercent: { type: ["number", "null"] }
+        terminalReturnP95Percent: { type: ["number", "null"] }
+        maxDrawdownP95Percent: { type: ["number", "null"] }
+        terminalReturnBuckets:
+          type: array
+          maxItems: 8
+          items: { $ref: "#/components/schemas/QuantMonteCarloBucket" }
+      required: [method, simulationCount, sampledSessions, probabilityOfLossPercent, terminalReturnP05Percent, terminalReturnMedianPercent, terminalReturnP95Percent, maxDrawdownP95Percent, terminalReturnBuckets]
     QuantEquityPoint:
       type: object
       additionalProperties: false
@@ -3018,6 +3949,12 @@ components:
         rebalance: { type: string, enum: [daily, weekly, monthly] }
         timingComparison:
           $ref: "#/components/schemas/QuantTimingComparison"
+        walkForward:
+          $ref: "#/components/schemas/QuantWalkForward"
+        parameterStability:
+          $ref: "#/components/schemas/QuantParameterStability"
+        monteCarlo:
+          $ref: "#/components/schemas/QuantMonteCarlo"
         costStress:
           $ref: "#/components/schemas/QuantCostStress"
         strategy:
@@ -3043,7 +3980,7 @@ components:
         aiProvider:
           type: string
           # OpenRouter remains for historical saved runs; Groq Free joins new quant runs.
-          enum: [gemini, 1min_ai, agnes_ai, groq, ollama, openrouter]
+          enum: [gemini, 1min_ai, agnes_ai, groq, ollama, openrouter, nvidia_nim]
         createdAt:
           type: string
           format: date-time

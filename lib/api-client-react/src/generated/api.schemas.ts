@@ -13,6 +13,76 @@ export interface ErrorResponse {
   error: string;
 }
 
+export interface StockAiHistoricalValidationInput {
+  /** @pattern ^[A-Za-z0-9]{4,6}(\.(TW|TWO))?$ */
+  symbol: string;
+}
+
+export type StockAiHistoricalValidationProgressStatus = typeof StockAiHistoricalValidationProgressStatus[keyof typeof StockAiHistoricalValidationProgressStatus];
+
+
+export const StockAiHistoricalValidationProgressStatus = {
+  collecting: 'collecting',
+  qualified: 'qualified',
+  not_qualified: 'not_qualified',
+  insufficient_history: 'insufficient_history',
+} as const;
+
+export interface StockAiHistoricalValidationProgress {
+  symbol: string;
+  status: StockAiHistoricalValidationProgressStatus;
+  /** @minimum 0 */
+  processedForecastCount: number;
+  /** @minimum 0 */
+  requiredForecastCount: number;
+  /** @minimum 0 */
+  directionSampleCount: number;
+  /** @minimum 0 */
+  directionCorrectCount: number;
+  /** @minimum 0 */
+  programBaselineSampleCount: number;
+  /** @minimum 0 */
+  programBaselineCorrectCount: number;
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  programBaselineHitRatePercent: number | null;
+  /** @minimum 0 */
+  calibrationSampleCount: number;
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  meanForecastProbabilityPercent: number | null;
+  /**
+     * @minimum -100
+     * @maximum 100
+     * @nullable
+     */
+  calibrationGapPercent: number | null;
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  directionLowerBoundPercent: number | null;
+  /** @minimum 0 */
+  pricePlanSampleCount: number;
+  /** @minimum 0 */
+  pricePlanTargetFirstCount: number;
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  pricePlanLowerBoundPercent: number | null;
+  qualified: boolean;
+  message: string;
+}
+
 export type FuturesAiDayStrategyStatus = typeof FuturesAiDayStrategyStatus[keyof typeof FuturesAiDayStrategyStatus];
 
 
@@ -46,6 +116,7 @@ export const FuturesAiDayStrategyAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   gemini: 'gemini',
+  nvidia_nim: 'nvidia_nim',
 } as const;
 
 export type FuturesAiDayStrategyDataCoverage = typeof FuturesAiDayStrategyDataCoverage[keyof typeof FuturesAiDayStrategyDataCoverage];
@@ -125,6 +196,63 @@ export interface MarketFactor {
   threshold: number | null;
 }
 
+export type MarketChecklistSignal = typeof MarketChecklistSignal[keyof typeof MarketChecklistSignal];
+
+
+export const MarketChecklistSignal = {
+  bullish: 'bullish',
+  mixed: 'mixed',
+  bearish: 'bearish',
+  unavailable: 'unavailable',
+} as const;
+
+export interface MarketChecklistSource {
+  /** @maxLength 300 */
+  title: string;
+  url: string;
+}
+
+export interface MarketChecklistItem {
+  key: string;
+  label: string;
+  signal: MarketChecklistSignal;
+  /** @maxLength 500 */
+  detail: string;
+  /** @nullable */
+  source: string | null;
+  /** @nullable */
+  observedAt: string | null;
+  sources?: MarketChecklistSource[];
+}
+
+export interface MarketScenario {
+  label: string;
+  /** @maxLength 300 */
+  condition: string;
+  /** @maxLength 300 */
+  implication: string;
+}
+
+export type MarketChecklistConclusion = typeof MarketChecklistConclusion[keyof typeof MarketChecklistConclusion];
+
+
+export const MarketChecklistConclusion = {
+  bullish: 'bullish',
+  mixed: 'mixed',
+  bearish: 'bearish',
+  insufficient: 'insufficient',
+} as const;
+
+export interface MarketChecklist {
+  marketDate: string;
+  analyzedAt: string;
+  conclusion: MarketChecklistConclusion;
+  /** @maxLength 300 */
+  conclusionText: string;
+  items: MarketChecklistItem[];
+  scenarios: MarketScenario[];
+}
+
 export type MarketSummaryStatus = typeof MarketSummaryStatus[keyof typeof MarketSummaryStatus];
 
 
@@ -159,6 +287,10 @@ export interface MarketSummary {
   factors: MarketFactor[];
 }
 
+export type MarketSummaryResponse = MarketSummary & {
+  checklist: MarketChecklist;
+};
+
 export type MarketAiDailySummaryStatus = typeof MarketAiDailySummaryStatus[keyof typeof MarketAiDailySummaryStatus];
 
 
@@ -190,6 +322,7 @@ export const MarketAiDailySummaryAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   gemini: 'gemini',
+  nvidia_nim: 'nvidia_nim',
 } as const;
 
 export interface MarketNewsSource {
@@ -259,11 +392,20 @@ export const MarketIntradayHistoryTimeframe = {
   '1m': '1m',
 } as const;
 
+export type MarketIntradayHistorySessionType = typeof MarketIntradayHistorySessionType[keyof typeof MarketIntradayHistorySessionType];
+
+
+export const MarketIntradayHistorySessionType = {
+  live: 'live',
+  historical: 'historical',
+} as const;
+
 export interface MarketIntradayHistory {
   ticker: string;
   /** @pattern ^\d{4}-\d{2}-\d{2}$ */
   date: string;
   timeframe: MarketIntradayHistoryTimeframe;
+  sessionType: MarketIntradayHistorySessionType;
   source: string;
   previousClose: number;
   asOf: string;
@@ -328,6 +470,488 @@ export interface StockCatalogInstrument {
 export interface StockCatalog {
   asOf: string;
   instruments: StockCatalogInstrument[];
+}
+
+export interface EtfDistribution {
+  exDividendDate: string;
+  paymentDate: string;
+  /** @minimum 0 */
+  cashAmountPerUnit: number;
+}
+
+export type EtfMarketInstrumentExchangeName = typeof EtfMarketInstrumentExchangeName[keyof typeof EtfMarketInstrumentExchangeName];
+
+
+export const EtfMarketInstrumentExchangeName = {
+  上市: '上市',
+  上櫃: '上櫃',
+} as const;
+
+export interface EtfMarketInstrument {
+  symbol: string;
+  ticker: string;
+  name: string;
+  exchangeName: EtfMarketInstrumentExchangeName;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  price: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  marketPrice: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  netAssetValue: number | null;
+  /** @nullable */
+  discountPremiumAmount: number | null;
+  /** @nullable */
+  discountPremiumPercent: number | null;
+  /** @nullable */
+  navUpdatedAt: string | null;
+  distributions: EtfDistribution[];
+  /** @minimum 0 */
+  trailing12MonthDividend: number;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  trailing12MonthYieldPercent: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  latestDistribution: number | null;
+  frequency: string;
+}
+
+export type EtfMarketNavDataStatus = typeof EtfMarketNavDataStatus[keyof typeof EtfMarketNavDataStatus];
+
+
+export const EtfMarketNavDataStatus = {
+  available: 'available',
+  partial: 'partial',
+  unavailable: 'unavailable',
+} as const;
+
+export interface EtfMarket {
+  asOf: string;
+  source: string;
+  navDataStatus: EtfMarketNavDataStatus;
+  /** @nullable */
+  navDataUpdatedAt: string | null;
+  instruments: EtfMarketInstrument[];
+}
+
+export type StockAiPicksProgressStage = typeof StockAiPicksProgressStage[keyof typeof StockAiPicksProgressStage];
+
+
+export const StockAiPicksProgressStage = {
+  idle: 'idle',
+  market_data: 'market_data',
+  preliminary: 'preliminary',
+  final_selection: 'final_selection',
+  candidate_analysis: 'candidate_analysis',
+  complete: 'complete',
+  error: 'error',
+} as const;
+
+export interface StockAiPicksProgress {
+  stage: StockAiPicksProgressStage;
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  percent: number;
+  /** @minimum 0 */
+  completedBatches: number;
+  /** @minimum 0 */
+  failedBatches: number;
+  /** @minimum 0 */
+  totalBatches: number;
+  /** @minimum 0 */
+  scannedCount: number;
+  /** @minimum 0 */
+  candidateCount: number;
+  /** @minimum 0 */
+  completedCandidates: number;
+}
+
+export type MarketWideAiPickScanJobStatus = typeof MarketWideAiPickScanJobStatus[keyof typeof MarketWideAiPickScanJobStatus];
+
+
+export const MarketWideAiPickScanJobStatus = {
+  queued: 'queued',
+  running: 'running',
+  completed: 'completed',
+  failed: 'failed',
+} as const;
+
+export type MarketWideAiPickScanJobStage = typeof MarketWideAiPickScanJobStage[keyof typeof MarketWideAiPickScanJobStage];
+
+
+export const MarketWideAiPickScanJobStage = {
+  idle: 'idle',
+  market_data: 'market_data',
+  preliminary: 'preliminary',
+  final_selection: 'final_selection',
+  candidate_analysis: 'candidate_analysis',
+  complete: 'complete',
+  error: 'error',
+} as const;
+
+export type StockAiPicksMarketContextStatus = typeof StockAiPicksMarketContextStatus[keyof typeof StockAiPicksMarketContextStatus];
+
+
+export const StockAiPicksMarketContextStatus = {
+  complete: 'complete',
+  partial: 'partial',
+} as const;
+
+export type MarketWideAiPickForwardValidationStatus = typeof MarketWideAiPickForwardValidationStatus[keyof typeof MarketWideAiPickForwardValidationStatus];
+
+
+export const MarketWideAiPickForwardValidationStatus = {
+  collecting: 'collecting',
+  available: 'available',
+  unavailable: 'unavailable',
+} as const;
+
+export interface MarketWideAiPickForwardValidation {
+  status: MarketWideAiPickForwardValidationStatus;
+  horizonDays: 5;
+  /** @minimum 0 */
+  sampleCount: number;
+  /** @minimum 0 */
+  correctCount: number;
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  hitRatePercent: number | null;
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  lowerBoundPercent: number | null;
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  upperBoundPercent: number | null;
+  /**
+     * @minimum 0
+     * @maximum 1
+     * @nullable
+     */
+  brierScore: number | null;
+  /** @minimum 1 */
+  minimumSampleCount: number;
+  /** @nullable */
+  updatedAt: string | null;
+  methodNote: string;
+}
+
+export type StockAiPicksAiProvider = typeof StockAiPicksAiProvider[keyof typeof StockAiPicksAiProvider];
+
+
+export const StockAiPicksAiProvider = {
+  openai: 'openai',
+  '1min_ai': '1min_ai',
+  agnes_ai: 'agnes_ai',
+  groq: 'groq',
+  ollama: 'ollama',
+  openrouter: 'openrouter',
+  gemini: 'gemini',
+  nvidia_nim: 'nvidia_nim',
+} as const;
+
+export type StockAiWatchlistCandidateFailedStage = typeof StockAiWatchlistCandidateFailedStage[keyof typeof StockAiWatchlistCandidateFailedStage];
+
+
+export const StockAiWatchlistCandidateFailedStage = {
+  historical_data: 'historical_data',
+  smc_signal: 'smc_signal',
+  reward_to_risk: 'reward_to_risk',
+  backtest: 'backtest',
+} as const;
+
+export interface StockAiWatchlistCandidate {
+  symbol: string;
+  name: string;
+  /** @exclusiveMinimum 0 */
+  referencePrice: number;
+  failedStage: StockAiWatchlistCandidateFailedStage;
+  failureReason: string;
+  /** Specific verified conditions to monitor next; this is not an entry instruction. */
+  observation?: string;
+}
+
+export type StockAiPickReferenceType = typeof StockAiPickReferenceType[keyof typeof StockAiPickReferenceType];
+
+
+export const StockAiPickReferenceType = {
+  verified_trade: 'verified_trade',
+  official_daily_close: 'official_daily_close',
+} as const;
+
+export type StockAiPickCdpLevelsCurrentZone = typeof StockAiPickCdpLevelsCurrentZone[keyof typeof StockAiPickCdpLevelsCurrentZone];
+
+
+export const StockAiPickCdpLevelsCurrentZone = {
+  above_ah: 'above_ah',
+  ah_to_nh: 'ah_to_nh',
+  nh_to_cdp: 'nh_to_cdp',
+  cdp_to_nl: 'cdp_to_nl',
+  nl_to_al: 'nl_to_al',
+  below_al: 'below_al',
+} as const;
+
+/**
+ * @nullable
+ */
+export type StockAiPickCdpLevelsOpeningZone = typeof StockAiPickCdpLevelsOpeningZone[keyof typeof StockAiPickCdpLevelsOpeningZone] | null;
+
+
+export const StockAiPickCdpLevelsOpeningZone = {
+  above_ah: 'above_ah',
+  ah_to_nh: 'ah_to_nh',
+  nh_to_cdp: 'nh_to_cdp',
+  cdp_to_nl: 'cdp_to_nl',
+  nl_to_al: 'nl_to_al',
+  below_al: 'below_al',
+} as const;
+
+export interface StockAiPickCdpLevels {
+  referenceDate: string;
+  /** @exclusiveMinimum 0 */
+  cdp: number;
+  /** @exclusiveMinimum 0 */
+  ah: number;
+  /** @exclusiveMinimum 0 */
+  nh: number;
+  /** @exclusiveMinimum 0 */
+  nl: number;
+  /** @exclusiveMinimum 0 */
+  al: number;
+  currentZone: StockAiPickCdpLevelsCurrentZone;
+  /** @nullable */
+  openingZone: StockAiPickCdpLevelsOpeningZone;
+}
+
+export type StockAiPickOperationPlanAction = typeof StockAiPickOperationPlanAction[keyof typeof StockAiPickOperationPlanAction];
+
+
+export const StockAiPickOperationPlanAction = {
+  wait_for_pullback: 'wait_for_pullback',
+  conditional_entry: 'conditional_entry',
+  no_trade: 'no_trade',
+} as const;
+
+export type StockAiPickOperationPlan = {
+  action: StockAiPickOperationPlanAction;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  entryPrice: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  targetPrice: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  stopPrice: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  rewardToRisk: number | null;
+};
+
+export interface StockAiPick {
+  symbol: string;
+  ticker: string;
+  name: string;
+  /** @exclusiveMinimum 0 */
+  close: number;
+  /** @nullable */
+  change: number | null;
+  /** @nullable */
+  changePercent: number | null;
+  /** @minimum 0 */
+  tradedValue: number;
+  /** @exclusiveMinimum 0 */
+  referencePrice: number;
+  /** @nullable */
+  referenceChange: number | null;
+  /** @nullable */
+  referenceChangePercent: number | null;
+  referenceType: StockAiPickReferenceType;
+  /** @nullable */
+  referenceAsOf: string | null;
+  referenceSource: string;
+  /**
+     * @minimum 0
+     * @maximum 95
+     */
+  directionProbabilityPercent: number;
+  /**
+     * @minimum 0
+     * @maximum 95
+     */
+  aiDirectionProbabilityPercent: number;
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  ruleHitRatePercent: number | null;
+  /** @minimum 0 */
+  ruleCorrectCount: number;
+  /** @minimum 0 */
+  ruleSampleCount: number;
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  ruleLowerBoundPercent: number | null;
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  ruleUpperBoundPercent: number | null;
+  historicalValidationQualified: boolean;
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  historicalAiDirectionHitRatePercent: number | null;
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  historicalDirectionLowerBoundPercent: number | null;
+  /** @minimum 0 */
+  historicalDirectionSampleCount: number;
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  historicalAiPricePlanHitRatePercent: number | null;
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  historicalPricePlanLowerBoundPercent: number | null;
+  /** @minimum 0 */
+  historicalPricePlanSampleCount: number;
+  cdpLevels?: StockAiPickCdpLevels | null;
+  operationPlan: StockAiPickOperationPlan;
+  reason: string;
+  probabilityEvidence: string;
+  screeningReportMarkdown: string;
+}
+
+export type DailyPendingChangeAction = typeof DailyPendingChangeAction[keyof typeof DailyPendingChangeAction];
+
+
+export const DailyPendingChangeAction = {
+  continued: 'continued',
+  removed: 'removed',
+  added: 'added',
+} as const;
+
+export interface DailyPendingChange {
+  symbol: string;
+  name: string;
+  action: DailyPendingChangeAction;
+  detail: string;
+}
+
+export interface StockAiPicks {
+  marketDate: string;
+  analyzedAt: string;
+  source: string;
+  marketSummary: MarketSummary | null;
+  marketIndexQuote: MarketQuote;
+  /** @minimum 0 */
+  scannedCount: number;
+  /** @minimum 0 */
+  candidateCount: number;
+  marketContextStatus: StockAiPicksMarketContextStatus;
+  marketContextNote: string;
+  /** @minimum 0 */
+  advances: number;
+  /** @minimum 0 */
+  declines: number;
+  /** @minimum 0 */
+  unchanged: number;
+  marketView: string;
+  probabilityDefinition: string;
+  riskNote: string;
+  forwardValidation: MarketWideAiPickForwardValidation;
+  /** Whether a final AI selection batch was actually executed. */
+  aiSelectionAttempted?: boolean;
+  aiProvider: StockAiPicksAiProvider;
+  /**
+     * Separate non-qualified observation candidates; these are not AI picks or trade recommendations.
+     * @maxItems 5
+     */
+  watchlist?: StockAiWatchlistCandidate[];
+  /** @maxItems 30 */
+  picks: StockAiPick[];
+  dailyPendingChanges?: DailyPendingChange[];
+}
+
+export interface MarketWideAiPickScanJob {
+  /** @minimum 1 */
+  id: number;
+  status: MarketWideAiPickScanJobStatus;
+  stage: MarketWideAiPickScanJobStage;
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  percent: number;
+  /** @minimum 0 */
+  completedBatches: number;
+  /** @minimum 0 */
+  failedBatches: number;
+  /** @minimum 0 */
+  totalBatches: number;
+  /** @minimum 0 */
+  scannedCount: number;
+  /** @minimum 0 */
+  candidateCount: number;
+  /** @minimum 0 */
+  completedCandidates: number;
+  result: StockAiPicks | null;
+  /** @nullable */
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MarketWideAiPickScanRequest {
+  /** Start a fresh scan even if a completed result exists for today. */
+  force?: boolean;
 }
 
 export type StockFundamentalsStatus = typeof StockFundamentalsStatus[keyof typeof StockFundamentalsStatus];
@@ -549,6 +1173,52 @@ export interface StockAiDirectionValidation {
   methodNote: string;
 }
 
+export type StockAiPricePlanValidationStatus = typeof StockAiPricePlanValidationStatus[keyof typeof StockAiPricePlanValidationStatus];
+
+
+export const StockAiPricePlanValidationStatus = {
+  collecting: 'collecting',
+  unavailable: 'unavailable',
+} as const;
+
+export interface StockAiPricePlanValidation {
+  status: StockAiPricePlanValidationStatus;
+  source: string;
+  /** @nullable */
+  updatedAt: string | null;
+  /** @minimum 1 */
+  minimumSampleCount: number;
+  /** @minimum 0 */
+  forecastCount: number;
+  /** @minimum 0 */
+  pendingCount: number;
+  /** @minimum 0 */
+  targetFirstCount: number;
+  /** @minimum 0 */
+  stopFirstCount: number;
+  /** @minimum 0 */
+  noEntryCount: number;
+  /** @minimum 0 */
+  ambiguousCount: number;
+  /** @minimum 0 */
+  expiredCount: number;
+  /** @minimum 0 */
+  resolvedTradeCount: number;
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  winRatePercent: number | null;
+  /**
+     * @maxLength 240
+     * @nullable
+     */
+  message: string | null;
+  /** @maxLength 600 */
+  methodNote: string;
+}
+
 /**
  * @nullable
  */
@@ -563,6 +1233,8 @@ export const StockAiAssessmentAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   gemini: 'gemini',
+  nvidia_nim: 'nvidia_nim',
+  rule_based: 'rule_based',
 } as const;
 
 export type StockAiAssessmentReferenceType = typeof StockAiAssessmentReferenceType[keyof typeof StockAiAssessmentReferenceType];
@@ -864,6 +1536,111 @@ export type StockAiAssessmentForecastPathItem = {
   highPrice: number;
 };
 
+export type StockAiAssessmentScorecardItemsItemStatus = typeof StockAiAssessmentScorecardItemsItemStatus[keyof typeof StockAiAssessmentScorecardItemsItemStatus];
+
+
+export const StockAiAssessmentScorecardItemsItemStatus = {
+  available: 'available',
+  unavailable: 'unavailable',
+} as const;
+
+export type StockAiAssessmentScorecardItemsItem = {
+  /** @maxLength 40 */
+  id: string;
+  /** @maxLength 80 */
+  label: string;
+  /**
+     * @minimum 0
+     * @maximum 20
+     * @nullable
+     */
+  points: number | null;
+  /**
+     * @minimum 1
+     * @maximum 20
+     */
+  maximumPoints: number;
+  status: StockAiAssessmentScorecardItemsItemStatus;
+  /** @maxLength 240 */
+  note: string;
+};
+
+export type StockAiAssessmentScorecard = {
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  earnedPoints: number;
+  /**
+     * @minimum 0
+     * @maximum 100
+     */
+  availablePoints: number;
+  maximumPoints: 100;
+  complete: boolean;
+  /** @maxLength 240 */
+  note: string;
+  /** @maxItems 12 */
+  items: StockAiAssessmentScorecardItemsItem[];
+};
+
+export interface StockTradeScenario {
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  entryPrice: number | null;
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  targetPrice: number | null;
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  stopPrice: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  profitPercent: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  lossPercent: number | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  rewardToRisk: number | null;
+}
+
+export type StockAiAssessmentTradeScenarios = {
+  /** @exclusiveMinimum 0 */
+  referencePrice: number;
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  supportPrice: number | null;
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  resistancePrice: number | null;
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  deepSupportPrice: number | null;
+  directEntry: StockTradeScenario;
+  pullbackEntry: StockTradeScenario;
+  /** @maxLength 400 */
+  methodNote: string;
+};
+
 export type StockAiAssessmentHistoricalStrategyBacktestStatus = typeof StockAiAssessmentHistoricalStrategyBacktestStatus[keyof typeof StockAiAssessmentHistoricalStrategyBacktestStatus];
 
 
@@ -978,9 +1755,14 @@ export interface StockAiAssessment {
      * @maxItems 5
      */
   forecastPath: StockAiAssessmentForecastPathItem[];
+  scorecard: StockAiAssessmentScorecard;
+  tradeScenarios: StockAiAssessmentTradeScenarios;
+  /** @maxLength 5000 */
+  reportMarkdown: string;
   /** A fixed, reproducible strategy backtest kept separate from AI confidence and recommendations. */
   historicalStrategyBacktest: StockAiAssessmentHistoricalStrategyBacktest;
   forwardDirectionValidation: StockAiDirectionValidation;
+  pricePlanValidation: StockAiPricePlanValidation;
   disclaimer: string;
 }
 
@@ -1005,6 +1787,7 @@ export const StockAiBuyPriceVerdictAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   gemini: 'gemini',
+  nvidia_nim: 'nvidia_nim',
 } as const;
 
 export type StockAiBuyPriceVerdictVerdict = typeof StockAiBuyPriceVerdictVerdict[keyof typeof StockAiBuyPriceVerdictVerdict];
@@ -1070,6 +1853,22 @@ export const StockAiAssistantReplyAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   gemini: 'gemini',
+  nvidia_nim: 'nvidia_nim',
+} as const;
+
+export type StockAiAssistantReplyPositionAction = typeof StockAiAssistantReplyPositionAction[keyof typeof StockAiAssistantReplyPositionAction];
+
+
+export const StockAiAssistantReplyPositionAction = {
+  add: 'add',
+  hold: 'hold',
+  no_add: 'no_add',
+  reduce: 'reduce',
+  take_profit: 'take_profit',
+  stop_loss: 'stop_loss',
+  exit: 'exit',
+  wait: 'wait',
+  insufficient: 'insufficient',
 } as const;
 
 export type StockAiAssistantReplyContextCoverageTechnical = typeof StockAiAssistantReplyContextCoverageTechnical[keyof typeof StockAiAssistantReplyContextCoverageTechnical];
@@ -1129,6 +1928,7 @@ export interface StockAiAssistantReply {
   aiProvider: StockAiAssistantReplyAiProvider;
   /** @maxLength 1600 */
   answer: string;
+  positionAction: StockAiAssistantReplyPositionAction;
   /**
      * @maxItems 5
      * @items.maxLength 180
@@ -1178,6 +1978,101 @@ export interface AssistantChatSource {
   url: string;
 }
 
+export type ResearchJobStatus = typeof ResearchJobStatus[keyof typeof ResearchJobStatus];
+
+
+export const ResearchJobStatus = {
+  queued: 'queued',
+  running: 'running',
+  completed: 'completed',
+  failed: 'failed',
+} as const;
+
+export interface ResearchAgentTask {
+  id: string;
+  name: string;
+  specialty: string;
+  task: string;
+  status: ResearchJobStatus;
+  analysis: string;
+  sources: AssistantChatSource[];
+}
+
+export type AiResearchJobChannel = typeof AiResearchJobChannel[keyof typeof AiResearchJobChannel];
+
+
+export const AiResearchJobChannel = {
+  web: 'web',
+  line: 'line',
+} as const;
+
+export interface AiResearchJob {
+  id: string;
+  channel: AiResearchJobChannel;
+  question: string;
+  status: ResearchJobStatus;
+  answer: string;
+  agents: ResearchAgentTask[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AiStockResearchReportStatus = typeof AiStockResearchReportStatus[keyof typeof AiStockResearchReportStatus];
+
+
+export const AiStockResearchReportStatus = {
+  completed: 'completed',
+  failed: 'failed',
+} as const;
+
+export type AiStockResearchReportAssessment = { [key: string]: unknown };
+
+export interface AiStockResearchReport {
+  status: AiStockResearchReportStatus;
+  /** @nullable */
+  marketDate: string | null;
+  asOf: string;
+  answer: string;
+  assessment?: AiStockResearchReportAssessment;
+  error?: string;
+}
+
+export interface AiStockResearchAgent {
+  id: string;
+  symbol: string;
+  name: string;
+  mission: string;
+  enabled: boolean;
+  nextRunAt: string;
+  /** @nullable */
+  lastRunAt: string | null;
+  /** @nullable */
+  lastMarketDate: string | null;
+  /** @nullable */
+  lastError: string | null;
+  reports: AiStockResearchReport[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AiStockResearchAgentInput {
+  /**
+     * @minLength 4
+     * @maxLength 6
+     * @pattern ^[A-Za-z0-9]{4,6}$
+     */
+  symbol: string;
+  /**
+     * @minLength 1
+     * @maxLength 500
+     */
+  mission: string;
+}
+
+export interface AiStockResearchAgentUpdate {
+  enabled: boolean;
+}
+
 export type AssistantChatReplyAiProvider = typeof AssistantChatReplyAiProvider[keyof typeof AssistantChatReplyAiProvider];
 
 
@@ -1189,6 +2084,7 @@ export const AssistantChatReplyAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   gemini: 'gemini',
+  nvidia_nim: 'nvidia_nim',
   rule_based: 'rule_based',
 } as const;
 
@@ -1284,6 +2180,7 @@ export const StockAiConversationMessageAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   gemini: 'gemini',
+  nvidia_nim: 'nvidia_nim',
   rule_based: 'rule_based',
 } as const;
 
@@ -1382,6 +2279,7 @@ export interface LineNotifications {
   openingNotice: boolean;
   closingSummary: boolean;
   premarketSummary: boolean;
+  quantSignalAlerts: boolean;
 }
 
 export interface LineNotificationsUpdate {
@@ -1390,6 +2288,7 @@ export interface LineNotificationsUpdate {
   openingNotice: boolean;
   closingSummary: boolean;
   premarketSummary: boolean;
+  quantSignalAlerts: boolean;
 }
 
 export interface LineLinkCode {
@@ -1397,9 +2296,21 @@ export interface LineLinkCode {
   expiresAt: string;
 }
 
+export interface EtfHolding {
+  /** @pattern ^00[A-Z0-9]{2,4}$ */
+  symbol: string;
+  /**
+     * @minimum 1
+     * @maximum 100000000
+     */
+  shares: number;
+}
+
 export interface WatchlistUpdate {
   /** @maxItems 100 */
   watchlist: WatchlistEntry[];
+  /** @maxItems 100 */
+  etfHoldings?: EtfHolding[];
 }
 
 export interface AccountProfile {
@@ -1408,6 +2319,8 @@ export interface AccountProfile {
   isAdmin: boolean;
   /** @maxItems 100 */
   watchlist: WatchlistEntry[];
+  /** @maxItems 100 */
+  etfHoldings: EtfHolding[];
   maxWatchlistItems: number;
 }
 
@@ -1454,10 +2367,10 @@ export type AdminWebSearchDiagnosticProvider = typeof AdminWebSearchDiagnosticPr
 
 
 export const AdminWebSearchDiagnosticProvider = {
-  google_news_rss: 'google_news_rss',
   duckduckgo: 'duckduckgo',
   brave: 'brave',
   searxng: 'searxng',
+  google_news_rss: 'google_news_rss',
 } as const;
 
 export type AdminWebSearchDiagnosticOutcome = typeof AdminWebSearchDiagnosticOutcome[keyof typeof AdminWebSearchDiagnosticOutcome];
@@ -1602,6 +2515,7 @@ export const QuantResearchInterpretationAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   openai: 'openai',
+  nvidia_nim: 'nvidia_nim',
 } as const;
 
 export interface QuantFactorWeights {
@@ -1859,10 +2773,85 @@ export interface QuantTimingComparison {
   selectedCandidate: string;
   /**
      * @minItems 3
-     * @maxItems 3
+     * @maxItems 5
      */
   calibrationCandidates: QuantTimingCandidateResult[];
   validation: QuantTimingComparisonValidation;
+}
+
+export interface QuantWalkForwardFold {
+  index: number;
+  trainStartDate: string;
+  trainEndDate: string;
+  validationStartDate: string;
+  validationEndDate: string;
+  selectedThreshold: number;
+  closedTradeCount: number;
+  /** @nullable */
+  winRatePercent: number | null;
+  totalReturnPercent: number;
+  maxDrawdownPercent: number;
+}
+
+export interface QuantWalkForward {
+  /**
+     * @minItems 1
+     * @maxItems 3
+     */
+  folds: QuantWalkForwardFold[];
+}
+
+export type QuantParameterStabilityPointRebalance = typeof QuantParameterStabilityPointRebalance[keyof typeof QuantParameterStabilityPointRebalance];
+
+
+export const QuantParameterStabilityPointRebalance = {
+  daily: 'daily',
+  weekly: 'weekly',
+  monthly: 'monthly',
+} as const;
+
+export interface QuantParameterStabilityPoint {
+  threshold: number;
+  rebalance: QuantParameterStabilityPointRebalance;
+  closedTradeCount: number;
+  /** @nullable */
+  winRatePercent: number | null;
+  totalReturnPercent: number;
+  maxDrawdownPercent: number;
+}
+
+export interface QuantParameterStability {
+  calibrationStartDate: string;
+  calibrationEndDate: string;
+  thresholdFactor: string;
+  /**
+     * @minItems 1
+     * @maxItems 15
+     */
+  grid: QuantParameterStabilityPoint[];
+}
+
+export interface QuantMonteCarloBucket {
+  range: string;
+  count: number;
+}
+
+export interface QuantMonteCarlo {
+  method: string;
+  simulationCount: number;
+  sampledSessions: number;
+  /** @nullable */
+  probabilityOfLossPercent: number | null;
+  /** @nullable */
+  terminalReturnP05Percent: number | null;
+  /** @nullable */
+  terminalReturnMedianPercent: number | null;
+  /** @nullable */
+  terminalReturnP95Percent: number | null;
+  /** @nullable */
+  maxDrawdownP95Percent: number | null;
+  /** @maxItems 8 */
+  terminalReturnBuckets: QuantMonteCarloBucket[];
 }
 
 export interface QuantEquityPoint {
@@ -1949,6 +2938,7 @@ export const QuantResearchResultAiProvider = {
   groq: 'groq',
   ollama: 'ollama',
   openrouter: 'openrouter',
+  nvidia_nim: 'nvidia_nim',
 } as const;
 
 export interface QuantResearchResult {
@@ -1966,6 +2956,9 @@ export interface QuantResearchResult {
   topN: number;
   rebalance: QuantResearchResultRebalance;
   timingComparison?: QuantTimingComparison;
+  walkForward?: QuantWalkForward;
+  parameterStability?: QuantParameterStability;
+  monteCarlo?: QuantMonteCarlo;
   costStress?: QuantCostStress;
   strategy: QuantStrategy;
   metrics: QuantBacktestMetrics;
@@ -2149,6 +3142,18 @@ export interface PaperTradingPortfolio {
   trades: PaperTradingTrade[];
   disclaimer: string;
 }
+
+export type GetMarketAiDailySummaryParams = {
+mode?: GetMarketAiDailySummaryMode;
+};
+
+export type GetMarketAiDailySummaryMode = typeof GetMarketAiDailySummaryMode[keyof typeof GetMarketAiDailySummaryMode];
+
+
+export const GetMarketAiDailySummaryMode = {
+  premarket: 'premarket',
+  closing: 'closing',
+} as const;
 
 export type GetMarketHistoryParams = {
 range?: GetMarketHistoryRange;

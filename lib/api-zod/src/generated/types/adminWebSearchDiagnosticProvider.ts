@@ -10,8 +10,8 @@ export type AdminWebSearchDiagnosticProvider = typeof AdminWebSearchDiagnosticPr
 
 
 export const AdminWebSearchDiagnosticProvider = {
-  google_news_rss: 'google_news_rss',
   duckduckgo: 'duckduckgo',
   brave: 'brave',
   searxng: 'searxng',
+  google_news_rss: 'google_news_rss',
 } as const;

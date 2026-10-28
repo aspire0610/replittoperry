@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/tw-stock-dashboard/"
+title = "台股量化決策儀表板 — Vercel 版"
+description = "A Taiwan stock market research dashboard that fetches market and ticker history, computes transparent technical indicators and risk scenarios, and is structured for deployment on Vercel while preserving the original Streamlit app."
+version = "1.0.0"
+id = "artifacts/tw-stock-dashboard"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/tw-stock-dashboard/" ]
+localPort = 21750
+
+[services.development]
+run = "pnpm --filter @workspace/tw-stock-dashboard run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/tw-stock-dashboard", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/tw-stock-dashboard/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21750"
+BASE_PATH = "/tw-stock-dashboard/"

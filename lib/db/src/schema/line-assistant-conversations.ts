@@ -11,6 +11,7 @@ export const lineAssistantConversationsTable = pgTable(
   "line_assistant_conversations",
   {
     lineUserId: text("line_user_id").primaryKey(),
+    ownerUserId: text("owner_user_id"),
     messages: jsonb("messages").$type<LineAssistantMessage[]>().notNull().default([]),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()

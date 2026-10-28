@@ -1,0 +1,82 @@
+modules = ["nodejs-24", "python-base-3.13", "postgresql-16"]
+
+[deployment]
+router = "application"
+deploymentTarget = "autoscale"
+
+[deployment.postBuild]
+args = ["pnpm", "store", "prune"]
+env = { "CI" = "true" }
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Streamlit Dashboard"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Market AI Scan Worker"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Market AI Scan Worker (Development)"
+
+[[workflows.workflow]]
+name = "Streamlit Dashboard"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = """
+printf '
+' | streamlit run app.py --server.port 5000 --server.address 0.0.0.0"""
+waitForPort = 5000
+
+[[workflows.workflow]]
+name = "Market AI Scan Worker"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api-server run market-scan-worker:production"
+
+[[workflows.workflow]]
+name = "Market AI Scan Worker (Development)"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api-server run market-scan-worker"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[agent]
+stack = "PNPM_WORKSPACE"
+expertMode = true
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 20000
+
+[nix]
+channel = "stable-25_05"
+packages = ["glibcLocales"]
+
+[userenv]
+
+[userenv.shared]
+INITIAL_ADMIN_EMAIL = "aspire0610@gmail.com"

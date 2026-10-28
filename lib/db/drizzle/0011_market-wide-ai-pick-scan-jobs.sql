@@ -1,0 +1,1 @@
+ALTER TABLE "market_wide_ai_pick_scan_jobs" ADD COLUMN "completed_candidates" integer DEFAULT 0 NOT NULL;

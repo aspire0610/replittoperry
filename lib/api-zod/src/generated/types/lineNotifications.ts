@@ -14,4 +14,5 @@ export interface LineNotifications {
   openingNotice: boolean;
   closingSummary: boolean;
   premarketSummary: boolean;
+  quantSignalAlerts: boolean;
 }

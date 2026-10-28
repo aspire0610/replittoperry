@@ -22,6 +22,111 @@
       "when": 1791632180362,
       "tag": "0002_condemned_iron_lad",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792033092571,
+      "tag": "0003_silky_vanisher",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792037246075,
+      "tag": "0004_worried_boomerang",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792172159012,
+      "tag": "0005_ai-provider-coordination",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792172366358,
+      "tag": "0006_ai-provider-cooldown-status",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792223495310,
+      "tag": "0007_broken_mister_fear",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792260428222,
+      "tag": "0008_market-wide-ai-pick-forecasts",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792260607595,
+      "tag": "0009_market-wide-ai-pick-method-version",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792285557756,
+      "tag": "0010_market-wide-ai-pick-scan-jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792285816049,
+      "tag": "0011_market-wide-ai-pick-scan-jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792293200886,
+      "tag": "0012_lucky_meggan",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792293444171,
+      "tag": "0013_absent_nightmare",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792293545799,
+      "tag": "0014_classy_shadow_king",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1792295690092,
+      "tag": "0015_ai-research-employees",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1792413435587,
+      "tag": "0016_stock_research_agents",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792413808212,
+      "tag": "0017_thin_red_ghost",
+      "breakpoints": true
     }
   ]
 }

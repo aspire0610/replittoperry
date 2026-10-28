@@ -11,10 +11,17 @@ import {
   usesDifferentAnalysisVersion,
 } from "./lib/buy-verdict-display";
 import { evaluateChipExhaustion } from "./lib/chip-exhaustion";
+import { splitAssistantAnswer } from "./lib/assistant-chat-format";
 import {
   getStockQuoteDisplayStatus,
   getStockQuoteFallbackReason,
 } from "./lib/stock-quote-display";
+import { StockAiHistoricalValidation } from "./components/stock-ai-historical-validation";
+import { StockAiScorecardDetails } from "./components/stock-ai-scorecard";
+import {
+  isTaipeiClosingSummaryHours,
+  isTaipeiPremarketSummaryHours,
+} from "./lib/market-summary-window";
 import { QueryClient, QueryClientProvider, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ClerkProvider, useAuth, useClerk } from "@clerk/react";
 import {
@@ -72,12 +79,14 @@ import {
   askStockAiAssistant,
   useDeleteAccountStockAiConversation,
   useGetAccountStockAiConversation,
+  useGetAccountResearchJobs,
   useGetFuturesAiDayStrategy,
   useGetMarketIntraday,
   useGetMarketHistory,
   useGetMarketOverview,
   useGetMarketSummary,
   useGetMarketAiDailySummary,
+  getMarketAiDailySummary,
   useGetStockAiAssessment,
   useGetStockCatalog,
   useGetStockHistory,
@@ -86,7 +95,7 @@ import {
   type FuturesAiDayStrategy,
   type MarketAiDailySummary,
   type MarketIntradayHistory,
-  type MarketSummary,
+  type MarketSummaryResponse,
   type StockAiConversationMessage,
   type StockAiAssessment,
   type StockResearchData,
@@ -103,7 +112,10 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Link, Route, Switch, Router as WouterRouter, useLocation } from "wouter";
 import { AcceptInvitationPage, AdminUsersPage, SignInPage } from "@/pages/account";
 import QuantLabPage from "@/pages/quant-lab";
+import AiPicksPage from "@/pages/ai-picks";
+import { ResearchOfficePage, type ResearchJob as ResearchOfficeJob } from "@/pages/research-office";
 import SystemSettingsPage from "@/pages/system-settings";
+import EtfSavingsPage from "@/pages/etf-savings";
 import NotFound from "@/pages/not-found";
 
 type Range = "1mo" | "3mo" | "6mo" | "1y";
@@ -147,6 +159,22 @@ const DEFAULT_CARD_ORDER: CardId[] = [
   "technical-ledger",
 ];
 
+const CARD_DOCK_TITLES: Partial<Record<CardId, string>> = {
+  "stock-search": "個股搜尋與報價",
+  "market-index": "加權指數與市場行情",
+  "market-intraday": "加權指數分時",
+  "market-analysis": "台股大盤走勢",
+  "market-summary": "大盤概況",
+  "market-history": "大盤每日收盤",
+  "futures-strategy": "臺指期日盤參考",
+  "stock-metrics": "個股快速摘要",
+  "research-data": "公司財報與投資人買賣",
+  "ai-assessment": "AI 個股方向參考",
+  "price-chart": "股價走勢",
+  "volume-chart": "成交量",
+  "technical-ledger": "股價計算明細",
+};
+
 function readCardLayout() {
   const fallback = { order: [...DEFAULT_CARD_ORDER], collapsed: {} as Partial<Record<CardId, boolean>> };
   if (typeof window === "undefined") return fallback;
@@ -188,21 +216,9 @@ const queryClient = new QueryClient({
 
 const LIVE_QUOTE_INTERVAL_MS = 5_000;
 const LIVE_MARKET_INTERVAL_MS = 1_000;
-const MARKET_SUMMARY_INTERVAL_MS = 30_000;
+const MARKET_SUMMARY_INTERVAL_MS = 15_000;
 
-function isTaipeiPremarketSummaryHours(date = new Date()): boolean {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Taipei", weekday: "short", hour: "2-digit", hourCycle: "h23" }).formatToParts(date);
-  const getPart = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
-  const hour = Number(getPart("hour"));
-  return ["Mon", "Tue", "Wed", "Thu", "Fri"].includes(getPart("weekday")) && hour >= 7 && hour < 10;
-}
-
-function isTaipeiClosingSummaryHours(date = new Date()): boolean {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Taipei", weekday: "short", hour: "2-digit", hourCycle: "h23" }).formatToParts(date);
-  const getPart = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
-  const hour = Number(getPart("hour"));
-  return ["Mon", "Tue", "Wed", "Thu", "Fri"].includes(getPart("weekday")) && hour >= 15 && hour < 17;
-}
+type MarketDailySummaryMode = "premarket" | "closing";
 
 const CHART_COLORS = {
   rising: "#c84b31",
@@ -317,6 +333,16 @@ function parseError(error: unknown) {
   }
   if (error && typeof error === "object" && "error" in error) return String((error as { error?: unknown }).error);
   return "行情來源未回傳可用資料。";
+}
+
+function getErrorMarkdownReport(error: unknown): string | undefined {
+  if (!error || typeof error !== "object" || !("data" in error)) return undefined;
+  const data = (error as { data?: unknown }).data;
+  if (!data || typeof data !== "object") return undefined;
+  const reportMarkdown = (data as { reportMarkdown?: unknown }).reportMarkdown;
+  return typeof reportMarkdown === "string" && reportMarkdown.trim()
+    ? reportMarkdown
+    : undefined;
 }
 
 function parseConversationSyncError(error: unknown) {
@@ -470,11 +496,6 @@ function CsvButton({ filename, rows }: { filename: string; rows: Array<Record<st
   );
 }
 
-function measureCardContent(content: HTMLDivElement): number {
-  const panel = content.firstElementChild;
-  return panel instanceof HTMLElement ? panel.offsetHeight : content.scrollHeight;
-}
-
 function WorkspaceCard({
   cardId,
   title,
@@ -496,36 +517,13 @@ function WorkspaceCard({
   if (!scope.includes(cardId)) {
     throw new Error(`Workspace card "${cardId}" is outside its registered sorting group.`);
   }
-  const contentRef = useRef<HTMLDivElement>(null);
-  const [contentHeight, setContentHeight] = useState<number | null>(null);
-
-  useLayoutEffect(() => {
-    const content = contentRef.current;
-    if (!content || collapsed) return undefined;
-    const updateHeight = () => setContentHeight(measureCardContent(content));
-    updateHeight();
-    const observer = new ResizeObserver(updateHeight);
-    const panel = content.firstElementChild;
-    if (panel) observer.observe(panel);
-    return () => observer.disconnect();
-  }, [collapsed]);
-
-  const toggleContent = () => {
-    const content = contentRef.current;
-    if (content) {
-      const currentHeight = content.getBoundingClientRect().height;
-      content.style.height = `${currentHeight}px`;
-      void content.offsetHeight;
-      setContentHeight(collapsed ? measureCardContent(content) : 0);
-    }
-    onToggle();
-  };
+  if (collapsed) return null;
 
   return (
     <motion.article
       layout="position"
       transition={{ type: "spring", stiffness: 380, damping: 32, mass: 0.7 }}
-      className={`workspace-card ${collapsed ? "is-collapsed" : ""}`}
+      className="workspace-card"
       style={{ order: cardOrder.orderIndex }}
       data-testid={`card-${cardId}`}
       data-card-id={cardId}
@@ -558,25 +556,22 @@ function WorkspaceCard({
         <button
           type="button"
           className="card-collapse-trigger"
-          onClick={toggleContent}
-          aria-expanded={!collapsed}
+          onClick={onToggle}
+          aria-label={`收起「${title}」`}
+          aria-expanded="true"
           aria-controls={`card-content-${cardId}`}
           data-testid={`button-toggle-${cardId}`}
         >
           <span>{title}</span>
-          {collapsed ? <ChevronDown size={15} /> : <ChevronUp size={15} />}
+          <ChevronUp size={15} />
         </button>
         {toolbarAction && (
           <div className="workspace-card-toolbar-action">{toolbarAction}</div>
         )}
       </div>
       <div
-        ref={contentRef}
         id={`card-content-${cardId}`}
         className="workspace-card-content"
-        style={{ height: collapsed ? 0 : contentHeight ?? "auto" }}
-        aria-hidden={collapsed}
-        inert={collapsed}
       >
         {children}
       </div>
@@ -615,10 +610,11 @@ function SkeletonBlock({ className = "" }: { className?: string }) {
   return <div className={`skeleton-block ${className}`} aria-label="載入中" />;
 }
 
-function ProviderError({ message, onRetry, title = "行情來源暫時無法使用" }: {
+function ProviderError({ message, onRetry, title = "行情來源暫時無法使用", markdownReport }: {
   message: string;
   onRetry: () => void;
   title?: string;
+  markdownReport?: string;
 }) {
   return (
     <div className="state-box state-error">
@@ -628,6 +624,14 @@ function ProviderError({ message, onRetry, title = "行情來源暫時無法使�
         <p>{message}</p>
       </div>
       <button type="button" className="text-button" onClick={onRetry} data-testid="button-retry-provider">重試</button>
+      {markdownReport && (
+        <details style={{ gridColumn: "1 / -1", width: "100%" }}>
+          <summary>量化 Markdown 報告（AI 判讀暫缺）</summary>
+          <pre style={{ margin: "10px 0 0", whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontSize: 12, lineHeight: 1.65 }}>
+            {markdownReport}
+          </pre>
+        </details>
+      )}
     </div>
   );
 }
@@ -841,7 +845,7 @@ function FuturesSessionReadout({
         <MarketPrice price={quote.price} available={quote.available} />
         <div className={`quote-change ${quote.available ? rising ? "is-rising" : "is-falling" : ""}`}>
           {quote.available && (rising ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />)}
-          {quote.available ? `${formatNumber(quote.change, 2)} / ${formatPercent(quote.changePercent)}` : quote.error ?? "行情來源暫時無法提供"}
+          {quote.available ? `${formatNumber(quote.change, 2)} / ${formatPercent(quote.changePercent)}` : "行情資料暫不可用"}
         </div>
       </div>
     </div>
@@ -1265,7 +1269,7 @@ function PriceChart({ bars, symbol, dark, assessment }: {
           assessment.takeProfitPrice !== null && (
             <>
               <span>
-                <i className="legend-line entry-reference-line" /> AI 買進參考
+                <i className="legend-line entry-reference-line" /> AI 主觀勝率較佳買價
               </span>
               <span>
                 <i
@@ -1367,7 +1371,7 @@ function PriceChart({ bars, symbol, dark, assessment }: {
                   y={assessment.entryPrice}
                   stroke={CHART_COLORS.signal}
                   strokeDasharray="2 4"
-                  label="AI 買進參考"
+                  label="AI 主觀勝率較佳買價"
                 />
                 <ReferenceLine
                   y={assessment.stopLossPrice}
@@ -1404,8 +1408,8 @@ function PriceChart({ bars, symbol, dark, assessment }: {
           assessment.takeProfitPrice !== null && (
             <p>
               {assessment.referenceType === "official_daily_close"
-                ? "次一交易日條件參考"
-                : "條件式參考買點"}
+                ? "AI 主觀勝率較佳買價（次一交易日條件參考）"
+                : "AI 主觀勝率較佳買價"}
               ：進場 {formatNumber(assessment.entryPrice, 2)} 元、停損{" "}
               {formatNumber(assessment.stopLossPrice, 2)} 元、目標賣出{" "}
               {formatNumber(assessment.takeProfitPrice, 2)} 元。
@@ -1417,7 +1421,11 @@ function PriceChart({ bars, symbol, dark, assessment }: {
       <section className="forecast-path" data-testid="panel-ai-price-forecast">
         <div className="forecast-path-heading">
           <div><strong>未來 5 個交易日可能走勢</strong><small>每天一個估計，不代表一定會照這樣走。</small></div>
-          <AiProviderBadge provider={assessment?.aiProvider} compact />
+          <AiProviderBadge
+            provider={assessment?.aiProvider}
+            compact
+            context="stock_assessment"
+          />
         </div>
         {assessment ? <>
           {hasValidReference ? (
@@ -1509,11 +1517,13 @@ function VolumeChart({ bars, symbol, dark }: { bars: Bar[]; symbol: string; dark
 
 function SummaryPanel({
   summary,
+  dailySummary,
   loading,
   error,
   onRetry,
 }: {
-  summary: MarketSummary | undefined;
+  summary: MarketSummaryResponse | undefined;
+  dailySummary: MarketAiDailySummary | undefined;
   loading: boolean;
   error: unknown;
   onRetry: () => void;
@@ -1527,6 +1537,14 @@ function SummaryPanel({
         : summary?.status === "neutral"
           ? "無明確漲跌訊號"
           : "無資料";
+  const checklistLabel = summary?.checklist.conclusion === "bullish"
+    ? "偏多"
+    : summary?.checklist.conclusion === "bearish"
+      ? "偏空"
+      : summary?.checklist.conclusion === "insufficient" ? "資料不足" : "震盪";
+  const signalLabel = (signal: string) => signal === "bullish"
+    ? "偏多"
+    : signal === "bearish" ? "偏空" : signal === "unavailable" ? "資料不足" : "震盪";
   return (
     <Panel title="大盤概況" eyebrow="依市場條件整理" className="summary-panel">
       {loading && !summary ? (
@@ -1554,15 +1572,59 @@ function SummaryPanel({
               </div>
             </div>
           </div>
-          <div className="factor-list">
-            {summary.factors.length === 0 ? <EmptyState title="沒有可查看的條件" detail="目前沒有足夠的大盤資料可以比較。" /> : summary.factors.map((factor) => (
-              <div className="factor-row" key={factor.key} data-testid={`row-market-factor-${factor.key}`}>
-                <span className={`factor-icon ${factor.passed === true ? "pass" : factor.passed === false ? "fail" : "unknown"}`}>{factor.passed === true ? <Check size={13} /> : factor.passed === false ? "×" : "—"}</span>
-                <span className="factor-label">{factor.label}</span>
-                <span className="factor-value">{factor.passed === true ? "符合" : factor.passed === false ? "未符合" : "資料不足"}</span>
-              </div>
-            ))}
-          </div>
+          <section className="market-checklist" data-testid="market-direction-checklist">
+            <div className="market-checklist-heading">
+              <div><h3>盤中多空檢查表</h3><small>每 15 秒更新 · 日線資料日 {formatDate(summary.checklist.marketDate)} · 更新於 {formatTime(summary.checklist.analyzedAt)}</small></div>
+              <span className={`status-pill ${summary.checklist.conclusion}`}>{checklistLabel}</span>
+            </div>
+            <p className="market-checklist-conclusion">{summary.checklist.conclusionText}</p>
+            <div className="market-checklist-items">
+              {summary.checklist.items.map((item) => (
+                <div className="market-checklist-row" key={item.key} data-testid={`row-market-check-${item.key}`}>
+                  {(() => {
+                    const isEvents = item.key === "events";
+                    const signal = item.signal;
+                    const sources = isEvents ? item.sources ?? [] : [];
+                    return <>
+                  <span className={`factor-icon ${signal === "bullish" ? "pass" : signal === "bearish" ? "fail" : "unknown"}`}>
+                    {signal === "bullish" ? <Check size={13} /> : signal === "bearish" ? "×" : "—"}
+                  </span>
+                  <div className="market-checklist-detail">
+                    <strong>{item.label}</strong>
+                    <span>{item.detail}</span>
+                    {sources.length > 0 && <div className="market-checklist-event-sources">
+                      {sources.map((source) => <a key={source.url} href={source.url} target="_blank" rel="noopener noreferrer">{source.title}</a>)}
+                    </div>}
+                    <small>{item.source ?? (isEvents ? "搜尋來源未提供" : "來源資料不足")}{item.observedAt ? ` · ${formatTime(item.observedAt)}` : ""}</small>
+                  </div>
+                  <b className={`market-checklist-signal ${signal}`}>{isEvents ? sources.length ? "已找到" : item.source?.includes("暫不可用") ? "搜尋失敗" : "未找到" : signalLabel(signal)}</b>
+                    </>;
+                  })()}
+                </div>
+              ))}
+            </div>
+            <div className="market-scenarios">
+              {summary.checklist.scenarios.map((scenario) => (
+                <article key={scenario.label} className={`market-scenario scenario-${scenario.label}`}>
+                  <strong>{scenario.label}</strong>
+                  <p>{scenario.condition}</p>
+                  <small>{scenario.implication}</small>
+                </article>
+              ))}
+            </div>
+          </section>
+          <details className="market-factor-details">
+            <summary>查看指數技術條件</summary>
+            <div className="factor-list">
+              {summary.factors.length === 0 ? <EmptyState title="沒有可查看的條件" detail="目前沒有足夠的大盤資料可以比較。" /> : summary.factors.map((factor) => (
+                <div className="factor-row" key={factor.key} data-testid={`row-market-factor-${factor.key}`}>
+                  <span className={`factor-icon ${factor.passed === true ? "pass" : factor.passed === false ? "fail" : "unknown"}`}>{factor.passed === true ? <Check size={13} /> : factor.passed === false ? "×" : "—"}</span>
+                  <span className="factor-label">{factor.label}</span>
+                  <span className="factor-value">{factor.passed === true ? "符合" : factor.passed === false ? "未符合" : "資料不足"}</span>
+                </div>
+              ))}
+            </div>
+          </details>
           <div className="source-line"><Info size={13} /> 資料來源：{summary.source} · 更新時間 {formatTime(summary.asOf)} · 這些條件僅供參考，不能保證未來漲跌。</div>
         </>
       )}
@@ -1575,20 +1637,25 @@ function MarketPremarketSummaryCard({
   loading,
   error,
   onRetry,
-  closing = false,
+  mode,
 }: {
   summary: MarketAiDailySummary | undefined;
   loading: boolean;
   error: unknown;
   onRetry: () => void;
-  closing?: boolean;
+  mode: MarketDailySummaryMode;
 }) {
   const marketDateLabel = summary?.marketDate.slice(0, 10);
   const newsSources = summary?.newsSources ?? [];
+  const isClosing = mode === "closing";
+  const summaryLines = summary?.summary
+    ?.split(/\n+/u)
+    .map((line) => line.replace(/^📈\s*/u, "").replace(/^📊\s*/u, "").trim())
+    .filter(Boolean) ?? [];
   return (
-    <section className="market-ai-daily-summary premarket-summary-card" data-testid="panel-market-ai-daily-summary" aria-live="polite">
+    <section className={`market-ai-daily-summary premarket-summary-card${isClosing ? " closing-summary-card" : ""}`} data-testid={isClosing ? "panel-market-ai-closing-summary" : "panel-market-ai-daily-summary"} aria-live="polite">
       <div className="market-ai-daily-summary-heading">
-        <strong><Sparkles size={15} aria-hidden="true" /> AI 今日{closing ? "盤後總結" : "盤前摘要"}</strong>
+        <strong><Sparkles size={15} aria-hidden="true" /> AI 今日{isClosing ? "盤後總結" : "盤前摘要"}</strong>
         <div>
           {marketDateLabel && <span className="market-ai-daily-date">技術面截至 {marketDateLabel}</span>}
           <AiProviderBadge
@@ -1615,11 +1682,28 @@ function MarketPremarketSummaryCard({
           <button type="button" onClick={onRetry} data-testid="button-retry-market-ai-summary">重試</button>
         </div>
       ) : summary?.status === "available" && summary.summary ? (
-        <p className="market-ai-daily-text">{summary.summary}</p>
+        <div className="market-ai-daily-text">
+          {summaryLines.map((line, index) => {
+            const labelEnd = line.search(/[：｜]/u);
+            return (
+              <p
+                className={`market-ai-daily-line${index === 0 ? " is-lead" : ""}`}
+                key={`${index}-${line.slice(0, 24)}`}
+              >
+                {labelEnd >= 0 ? (
+                  <>
+                    <strong>{line.slice(0, labelEnd + 1)}</strong>
+                    {line.slice(labelEnd + 1)}
+                  </>
+                ) : line}
+              </p>
+            );
+          })}
+        </div>
       ) : (
         <div className="market-ai-daily-unavailable">
-          <p>{summary?.error ?? "AI 盤前摘要目前無法使用，稍後可以重試。"}</p>
-          <button type="button" onClick={onRetry} data-testid="button-retry-market-ai-summary">重試</button>
+          <p>{summary?.error ?? `AI 盤${isClosing ? "後總結" : "前摘要"}目前無法使用，稍後可以重試。`}</p>
+          <button type="button" onClick={onRetry} data-testid={isClosing ? "button-retry-market-ai-closing-summary" : "button-retry-market-ai-summary"}>重試</button>
         </div>
       )}
       {summary?.newsSearchStatus === "searched" && newsSources.length > 0 ? (
@@ -1655,6 +1739,7 @@ type AiProviderId =
   | "ollama"
   | "openrouter"
   | "gemini"
+  | "nvidia_nim"
   | "rule_based"
   | null
   | undefined;
@@ -1664,10 +1749,12 @@ function AiProviderBadge({
   provider,
   compact = false,
   state = "idle",
+  context = "default",
 }: {
   provider: AiProviderId;
   compact?: boolean;
   state?: "idle" | "loading" | "unavailable";
+  context?: "default" | "stock_assessment";
 }) {
   const labels = {
     openai: "OpenAI",
@@ -1677,6 +1764,7 @@ function AiProviderBadge({
     ollama: "Ollama",
     openrouter: "OpenRouter",
     gemini: "Gemini Flash-Lite",
+    nvidia_nim: "NVIDIA NIM",
     rule_based: "固定規則",
   } as const;
 
@@ -1685,7 +1773,9 @@ function AiProviderBadge({
       className={`ai-provider-badge${compact ? " is-compact" : ""}`}
       title={
         provider === "rule_based"
-          ? "由伺服器使用固定的台股單位規則回答，未呼叫 AI"
+          ? context === "stock_assessment"
+            ? "AI 未完成；此備援只整理可驗證行情，不提供方向預測或個股價位"
+            : "由伺服器使用固定的台股單位規則回答，未呼叫 AI"
           : provider
           ? "此 AI 結果實際使用的服務"
           : state === "loading"
@@ -1696,7 +1786,9 @@ function AiProviderBadge({
       }
     >
       {provider === "rule_based"
-        ? "規則換算"
+        ? context === "stock_assessment"
+          ? "規則備援"
+          : "規則換算"
         : provider
         ? `AI：${labels[provider]}`
         : state === "loading"
@@ -1757,6 +1849,29 @@ const MAX_SAVED_ASSISTANT_MESSAGES = 50;
 
 type AssistantChatMessage = StockAiConversationMessage & { isError?: boolean };
 
+function renderAssistantAnswer(content: string) {
+  const sections = splitAssistantAnswer(content);
+  if (sections.length === 1 && sections[0]?.label === null) return <p>{content}</p>;
+  return (
+    <div className="stock-ai-chat-answer-sections">
+      {sections.map((section, index) => {
+        const isConclusion =
+          index === 0 && ["方向結論", "方向判斷"].includes(section.label ?? "");
+        return (
+          <section
+            className={`stock-ai-chat-answer-section${isConclusion ? " is-conclusion" : ""}`}
+            key={`${section.label ?? "answer"}-${index}`}
+            aria-label={section.label ?? undefined}
+          >
+            {section.label && <strong>{section.label}</strong>}
+            <p>{section.body}</p>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 function shouldUseStockAiAssistant(
   question: string,
   symbol: string,
@@ -1777,7 +1892,7 @@ function shouldUseStockAiAssistant(
   if (isEducationalQuestion && !mentionsSelectedSymbol) return false;
 
   const isActionQuestion =
-    /(要不要(買|賣)|該不該(買|賣)|是否.{0,6}(買|賣)|可不可以.{0,4}(買|賣|加碼|減碼)|能不能.{0,4}(買|賣|加碼|減碼)|適合.{0,3}(買|賣)|值得.{0,3}買|買進|買入|加碼|減碼|賣出|出場|續抱|持有|持倉|停損|停利|獲利了結|操作建議|怎麼操作|如何操作|怎麼做)/u.test(
+    /(要不要(買|賣)|該不該(買|賣)|是否.{0,6}(買|賣)|可不可以.{0,4}(買|賣|加碼|減碼)|能不能.{0,4}(買|賣|加碼|減碼)|可以.{0,3}買|現在.{0,4}買|適合.{0,3}(買|賣)|值得.{0,3}買|買進|買入|加碼|減碼|賣出|出場|續抱|持有|持倉|停損|停利|獲利了結|操作建議|怎麼操作|如何操作|怎麼做)/u.test(
       question,
     );
   const namesStockContext =
@@ -1836,22 +1951,19 @@ function FloatingStockAiAssistant() {
     location === "/" ||
     location === "/watchlist" ||
     location === "/portfolio";
-  const [symbol, setSymbol] = useState(readSelectedSymbol);
-  const conversationSymbol = symbol.trim().toUpperCase();
+  const conversationSymbol = "MARKET";
   const [isOpen, setIsOpen] = useState(false);
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<AssistantChatMessage[]>([]);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
-  const activeSymbol = useRef(symbol);
   const activeUserId = useRef(currentUserId);
   const previousUserId = useRef<string | null>(null);
   const hydratedConversationKey = useRef("");
-  activeSymbol.current = symbol;
   activeUserId.current = currentUserId;
   const conversationQueryKey = useMemo(
-    () => ["account-stock-ai-conversation", currentUserId ?? "signed-out", conversationSymbol] as const,
+    () => ["account-ceo-ai-conversation", currentUserId ?? "signed-out", conversationSymbol] as const,
     [conversationSymbol, currentUserId],
   );
   const conversationQuery = useGetAccountStockAiConversation(
@@ -1879,48 +1991,13 @@ function FloatingStockAiAssistant() {
     Error,
     Parameters<typeof askAssistantChat>[0]
   >({
-    mutationFn: (data: Parameters<typeof askAssistantChat>[0]) => {
-      const request = { signal: AbortSignal.timeout(AI_ACTION_TIMEOUT_MS) };
-      const requestedSymbol = data.symbol ?? symbol;
-      if (shouldUseStockAiAssistant(data.question, requestedSymbol, messages)) {
-        return askStockAiAssistant(
-          {
-            ...data,
-            symbol: normalizeTaiwanStockSymbol(requestedSymbol),
-          },
-          request,
-        );
-      }
-      return askAssistantChat(data, request);
-    },
+    mutationFn: (data: Parameters<typeof askAssistantChat>[0]) =>
+      askAssistantChat(data, { signal: AbortSignal.timeout(AI_ACTION_TIMEOUT_MS) }),
   });
   const latestAiProvider = [...messages]
     .reverse()
     .find((message) => message.role === "assistant" && message.aiProvider)
     ?.aiProvider;
-
-  useEffect(() => {
-    const syncSelectedSymbol = () => setSymbol(readSelectedSymbol());
-    window.addEventListener(SELECTED_SYMBOL_CHANGE_EVENT, syncSelectedSymbol);
-    window.addEventListener("storage", syncSelectedSymbol);
-    return () => {
-      window.removeEventListener(SELECTED_SYMBOL_CHANGE_EVENT, syncSelectedSymbol);
-      window.removeEventListener("storage", syncSelectedSymbol);
-    };
-  }, []);
-
-  useLayoutEffect(() => {
-    setMessages([]);
-    setQuestion("");
-    mutation.reset();
-    saveConversationMutation.reset();
-    deleteConversationMutation.reset();
-  }, [
-    deleteConversationMutation.reset,
-    mutation.reset,
-    saveConversationMutation.reset,
-    symbol,
-  ]);
 
   useLayoutEffect(() => {
     const previous = previousUserId.current;
@@ -1933,7 +2010,7 @@ function FloatingStockAiAssistant() {
       hydratedConversationKey.current = "";
       if (previous) {
         queryClient.removeQueries({
-          queryKey: ["account-stock-ai-conversation", previous],
+          queryKey: ["account-ceo-ai-conversation", previous],
         });
       }
     }
@@ -1998,7 +2075,7 @@ function FloatingStockAiAssistant() {
   const conversationSyncStatus = !isLoaded
     ? "正在確認登入狀態…"
     : !isSignedIn
-      ? "登入帳號後可跨裝置同步這檔股票的聊天紀錄。"
+      ? "登入帳號後可跨裝置同步 CEO 對話。"
       : conversationQuery.isFetching
         ? "正在載入帳號對話…"
         : deleteConversationMutation.isPending
@@ -2028,10 +2105,9 @@ function FloatingStockAiAssistant() {
       return;
     }
 
-    const submittedSymbol = symbol;
     const submittedUserId = isSignedIn ? currentUserId : null;
     const submittedQueryKey = [
-      "account-stock-ai-conversation",
+      "account-ceo-ai-conversation",
       submittedUserId ?? "signed-out",
       conversationSymbol,
     ] as const;
@@ -2045,13 +2121,10 @@ function FloatingStockAiAssistant() {
     setMessages((current) => [...current, userMessage]);
     setQuestion("");
     mutation.mutate(
-      { symbol: submittedSymbol, question: trimmedQuestion, history },
+      { question: trimmedQuestion, history },
       {
         onSuccess: (reply) => {
-          if (
-            activeSymbol.current !== submittedSymbol ||
-            activeUserId.current !== submittedUserId
-          ) {
+          if (activeUserId.current !== submittedUserId) {
             return;
           }
           const assistantMessage: AssistantChatMessage =
@@ -2095,10 +2168,7 @@ function FloatingStockAiAssistant() {
           }
         },
         onError: (error) => {
-          if (
-            activeSymbol.current !== submittedSymbol ||
-            activeUserId.current !== submittedUserId
-          ) {
+          if (activeUserId.current !== submittedUserId) {
             return;
           }
           setMessages((current) => [
@@ -2175,13 +2245,13 @@ function FloatingStockAiAssistant() {
           className="stock-ai-chat-panel"
           id="stock-ai-assistant-panel"
           role="dialog"
-          aria-label="AI 聊天機器人對話"
+          aria-label="投資研究部 CEO 對話"
           data-testid="panel-stock-ai-assistant"
         >
           <div className="stock-ai-chat-heading">
             <div>
-              <h3><Sparkles size={15} /> AI 聊天機器人</h3>
-              <p>一般問題都能問；投資問題可參考選定標的 {symbol}</p>
+              <h3><Sparkles size={15} /> 投資研究部 CEO</h3>
+              <p>可直接詢問台股大盤、產業、ETF 或個股；CEO 會依問題整理資料並附上可用來源。</p>
               <small
                 className={`stock-ai-chat-sync-status${conversationQuery.isError || saveConversationMutation.isError || deleteConversationMutation.isError ? " is-error" : ""}`}
                 role="status"
@@ -2207,7 +2277,7 @@ function FloatingStockAiAssistant() {
               <button
                 type="button"
                 className="stock-ai-chat-icon-button"
-                aria-label="關閉 AI 助手"
+                aria-label="關閉 CEO 對話"
                 onClick={() => {
                   setIsOpen(false);
                   launcherRef.current?.focus();
@@ -2220,11 +2290,13 @@ function FloatingStockAiAssistant() {
           </div>
           <div className="stock-ai-chat-messages" role="log" aria-live="polite" aria-relevant="additions text">
             {messages.length === 0 ? (
-              <p className="stock-ai-chat-empty">可以聊一般問題，也可以問股票或 ETF；需要最新資訊時會搜尋網頁並列出來源。ETF 配息問題會優先比對交易所紀錄。</p>
+            <p className="stock-ai-chat-empty">你好，我是投資研究部 CEO。可以自然詢問台股大盤、產業、ETF、個股或一般投資研究；我會依問題選用研究資料，並標示可用來源與限制。</p>
             ) : messages.map((message, index) => (
               <article className={`stock-ai-chat-message ${message.role} ${message.isError ? "is-error" : ""}`} key={`${message.role}-${index}`}>
-                <span className="stock-ai-chat-role">{message.role === "user" ? "你" : "AI 助手"}</span>
-                <p>{message.content}</p>
+                <span className="stock-ai-chat-role">{message.role === "user" ? "你" : "CEO"}</span>
+                {message.role === "assistant"
+                  ? renderAssistantAnswer(message.content)
+                  : <p>{message.content}</p>}
                 {(message.citedFacts?.length || message.sources?.length || message.searchStatus || message.context || message.disclaimer) && (
                   <details className="stock-ai-chat-evidence">
                     <summary>查看參考資料</summary>
@@ -2279,7 +2351,7 @@ function FloatingStockAiAssistant() {
             {mutation.isPending && (
               <p className="stock-ai-chat-pending" role="status" aria-live="polite">
                 <RefreshCw size={14} className="spin" aria-hidden="true" />
-                <span>正在整理問題與可查證資料，請稍候…</span>
+                <span>CEO 正在整理問題與可查證資料，請稍候…</span>
               </p>
             )}
             <div ref={messageEndRef} />
@@ -2297,7 +2369,7 @@ function FloatingStockAiAssistant() {
                   event.currentTarget.form?.requestSubmit();
                 }
               }}
-              placeholder="輸入問題，按 Enter 送出，Shift + Enter 換行"
+              placeholder="例如：今天台股盤勢如何？或比較 6223 與同產業個股"
               maxLength={1000}
               rows={2}
               data-testid="input-stock-ai-question"
@@ -2306,7 +2378,7 @@ function FloatingStockAiAssistant() {
               <small>{question.length}/1000 · 最新資訊會列出來源，投資資訊不保證未來表現</small>
               <button type="submit" disabled={!question.trim() || mutation.isPending || saveConversationMutation.isPending || deleteConversationMutation.isPending || conversationQuery.isFetching} data-testid="button-ask-stock-ai">
                 <ArrowUpRight size={14} />
-                {mutation.isPending ? "回答中" : saveConversationMutation.isPending ? "同步中" : deleteConversationMutation.isPending ? "刪除中" : "送出"}
+                {mutation.isPending ? "整理中" : saveConversationMutation.isPending ? "同步中" : deleteConversationMutation.isPending ? "刪除中" : "交給 CEO"}
               </button>
             </div>
           </form>
@@ -2316,14 +2388,14 @@ function FloatingStockAiAssistant() {
         ref={launcherRef}
         type="button"
         className={`stock-ai-chat-launcher ${isOpen ? "is-open" : ""}`}
-        aria-label={isOpen ? "關閉 AI 操作小助手" : "開啟 AI 操作小助手"}
+        aria-label={isOpen ? "關閉投資研究部 CEO" : "開啟投資研究部 CEO"}
         aria-expanded={isOpen}
         aria-controls={isOpen ? "stock-ai-assistant-panel" : undefined}
         onClick={() => setIsOpen((open) => !open)}
         data-testid="button-open-stock-ai-assistant"
       >
         {isOpen ? <X size={21} /> : <MessageCircle size={21} />}
-        {!isOpen && <span>AI 助手</span>}
+        {!isOpen && <span>CEO</span>}
       </button>
     </div>
   );
@@ -2406,7 +2478,11 @@ function StockResearchDataPanel({
   if (!data && error) {
     return (
       <Panel title="公司財報與投資人買賣" eyebrow="官方資料">
-        <ProviderError message={parseError(error)} onRetry={onRetry} />
+        <ProviderError
+          message={parseError(error)}
+          onRetry={onRetry}
+          title="AI 分析暫時無法完成"
+        />
       </Panel>
     );
   }
@@ -2641,30 +2717,39 @@ function FuturesAiDayStrategyPanel({
 function StockAiAssessmentPanel({
   assessment,
   loading,
+  refreshing,
   error,
   onRetry,
 }: {
   assessment: StockAiAssessment | undefined;
   loading: boolean;
+  refreshing: boolean;
   error: unknown;
   onRetry: () => void;
 }) {
   const usingOfficialClose =
     assessment?.source.includes("最近收盤價（非即時") ?? false;
   const biasLabels: Record<StockAiAssessment["biasLevel"], string> = {
-    strong_bearish: "強下跌訊號",
-    bearish: "下跌訊號",
-    neutral: "無明確漲跌訊號",
-    bullish: "上漲訊號",
-    strong_bullish: "強上漲訊號",
+    strong_bearish: "明顯偏空",
+    bearish: "偏空",
+    neutral: "方向不明",
+    bullish: "偏多",
+    strong_bullish: "明顯偏多",
     insufficient: "資料不足",
   };
   const marketInfluenceLabels: Record<StockAiAssessment["marketInfluence"], string> = {
-    supportive: "大盤偏有利",
-    mixed: "市場走勢不一",
-    headwind: "大盤可能拖累",
+    supportive: "大盤有利",
+    mixed: "大盤分歧",
+    headwind: "大盤拖累",
     unavailable: "大盤資料不足",
   };
+  const marketInfluenceLabel =
+    assessment?.aiProvider === "rule_based" &&
+    assessment.marketSummary.startsWith("已取得大盤資料：")
+      ? "已取得大盤資料"
+      : assessment
+        ? marketInfluenceLabels[assessment.marketInfluence]
+        : "";
   const smcAnalysis = assessment?.smcAnalysis;
   const granvilleAnalysis = assessment?.granvilleAnalysis;
   const granvilleCandidateCount =
@@ -2788,46 +2873,68 @@ function StockAiAssessmentPanel({
     : usingOfficialClose
       ? assessment.action === "buy"
         ? hasCompleteBuyPlan
-          ? "次一交易日條件式參考"
-          : "收盤後先不直接買進"
-        : "目前不建議買進"
+          ? `明日核價 · AI 主觀勝率較佳買價 ${formatNumber(assessment.entryPrice, 2)} 元`
+          : "現在先不買"
+        : assessment.action === "hold"
+          ? "續抱，不加碼"
+          : assessment.action === "sell"
+            ? "持有者減碼"
+            : assessment.action === "insufficient"
+              ? "資料不足，先不動"
+              : "先不買"
       : assessment.action === "buy" && hasCompleteBuyPlan
-        ? "條件式進場參考（非現價買進）"
-        : "目前不建議買進";
+        ? `AI 主觀勝率較佳買價 ${formatNumber(assessment.entryPrice, 2)} 元`
+        : assessment.action === "hold"
+          ? "續抱，不加碼"
+          : assessment.action === "sell"
+            ? "持有者減碼"
+            : assessment.action === "insufficient"
+              ? "資料不足，先不動"
+              : "先不買";
   const actionContext = !assessment
     ? "等待個股 AI 分析完成後再判斷。"
     : usingOfficialClose
       ? assessment.action === "buy"
         ? hasCompleteBuyPlan
-          ? `以下價位依 ${getStockReferenceDate(assessment)} 官方收盤資料估算；下一交易日開盤後先核對最新成交價，條件仍符合才考慮。`
-          : "方向偏向上漲，但目前沒有完整且通過檢查的價位方案；下一交易日確認最新行情後再評估。"
-        : "AI 目前不是買進方向；收盤價只供參考，下一交易日再依最新成交確認。"
+          ? `依 ${getStockReferenceDate(assessment)} 收盤資料估算。AI 主觀勝率較佳買價為 ${formatNumber(assessment.entryPrice, 2)} 元；明天先核對即時價，條件未轉弱再分批進場。`
+          : "方向偏多，但缺少完整價位方案；現在先不買，明天核對即時行情再判斷。"
+        : assessment.action === "hold"
+          ? "未持有：先不買。已持有：續抱、不加碼。"
+          : assessment.action === "sell"
+            ? "未持有：不買。已持有：考慮減碼或退出；不是放空訊號。"
+            : assessment.action === "insufficient"
+              ? "資料不足，先不買賣；行情資料補齊後再判斷。"
+              : "現在先不買；明天用最新成交價和走勢重新判斷。"
       : assessment.action === "buy" && hasCompleteBuyPlan
         ? assessment.referenceType === "verified_trade" &&
           assessment.entryPrice !== null &&
           assessment.referencePrice > assessment.entryPrice
-          ? `目前成交價 ${formatNumber(assessment.referencePrice, 2)} 元高於進場參考 ${formatNumber(assessment.entryPrice, 2)} 元，先不要追價；等回到參考附近且條件仍成立時再檢查。`
-          : "AI 提供的是條件式進場、停損和目標價參考，不代表現在應以市價買進；先核對即時行情與進場條件。"
+          ? `現價 ${formatNumber(assessment.referencePrice, 2)} 元高於 AI 主觀勝率較佳買價 ${formatNumber(assessment.entryPrice, 2)} 元；先別追，回到該價附近且條件仍成立再分批進。`
+          : `AI 主觀勝率較佳買價 ${formatNumber(assessment.entryPrice, 2)} 元；確認行情條件仍成立，再按方案分批進場。`
         : assessment.action === "buy"
-          ? "買進方案缺少可驗證的價位或依據，現在不建議買進。"
+          ? "買進方案缺少可驗證價位，現在先不買。"
           : assessment.action === "hold"
-            ? "目前不建議新增買進；已持有者可參考續抱方向。"
+            ? "未持有：先不買。已持有：續抱、不加碼。"
             : assessment.action === "sell"
-              ? "目前不建議買進；已持有者可考慮減少持股。"
+              ? "未持有：不買。已持有：考慮減碼或退出；不是放空訊號。"
               : assessment.action === "wait"
-                ? "現在先不買進，等行情條件改變後再重新評估。"
-                : "資料不足，現在不建議買進；等資料更新後再分析。";
+                ? assessment.actionReferencePrice !== null &&
+                  assessment.actionReferenceLabel
+                  ? `現在先不買；股價到 ${assessment.actionReferenceLabel} ${formatNumber(assessment.actionReferencePrice, 2)} 元附近，再核對行情重判。`
+                  : "現在先不買；等短線方向和行情條件明確再判斷。"
+                : "資料不足，先不買賣；等行情資料補齊再判斷。";
 
   return (
     <Panel
-      title="AI 個股方向參考"
-      eyebrow="結合大盤與個股資料 · 未來 1–5 個交易日"
+      title="個股短線結論"
+      eyebrow="大盤＋個股證據 · 未來 1–5 個交易日"
       className="ai-assessment-panel"
       action={
         <div className="ai-panel-actions">
           <AiProviderBadge
             provider={assessment?.aiProvider}
             compact
+            context="stock_assessment"
             state={
               !assessment && loading
                 ? "loading"
@@ -2840,11 +2947,11 @@ function StockAiAssessmentPanel({
             type="button"
             className="ai-refresh-button"
             onClick={onRetry}
-            disabled={loading}
+            disabled={loading || refreshing}
             data-testid="button-refresh-ai-assessment"
           >
-            <RefreshCw size={13} className={loading ? "spin" : ""} />
-            更新分析
+            <RefreshCw size={13} className={loading || refreshing ? "spin" : ""} />
+            {refreshing ? "更新中" : "更新分析"}
           </button>
         </div>
       }
@@ -2859,11 +2966,22 @@ function StockAiAssessmentPanel({
           </div>
         </div>
       ) : error ? (
-        <ProviderError message={parseError(error)} onRetry={onRetry} />
+        <ProviderError
+          message={parseError(error)}
+          onRetry={onRetry}
+          title="AI 個股判讀暫時無法完成"
+          markdownReport={getErrorMarkdownReport(error)}
+        />
       ) : !assessment ? (
         <EmptyState title="目前沒有 AI 分析" detail="尚未取得足夠的行情與分析資料。" />
       ) : (
         <>
+          {refreshing && (
+            <div className="ai-refreshing-status" role="status" aria-live="polite" data-testid="status-ai-assessment-refreshing">
+              <RefreshCw size={13} className="spin" />
+              正在依最新可用行情更新分析；目前仍顯示上一筆完成結果。
+            </div>
+          )}
           <div className="ai-assessment-top">
             <div className={`sentiment-dashboard ${assessment.biasLevel}`}>
               <div className="sentiment-dashboard-heading">
@@ -2877,7 +2995,7 @@ function StockAiAssessmentPanel({
             <div className="ai-assessment-copy">
               <div className="ai-status-row">
                 <span className="ai-action-label">{actionLabel}</span>
-                <span className="ai-confidence">判斷一致度：{confidenceLabel}（不是勝率）</span>
+                <span className="ai-confidence">線索一致度：{confidenceLabel}（不是勝率）</span>
                 {usingOfficialClose && (
                   <span className="ai-confidence">
                     分析基準：最近官方收盤價（不是即時價格） · 交易日{" "}
@@ -2895,15 +3013,17 @@ function StockAiAssessmentPanel({
                 {actionContext}
               </p>
               <span className={`ai-market-pill ${assessment.marketInfluence}`}>
-                {marketInfluenceLabels[assessment.marketInfluence]}
+                {marketInfluenceLabel}
               </span>
             </div>
           </div>
+          <StockAiHistoricalValidation symbol={assessment.symbol} />
+          <StockAiScorecardDetails assessment={assessment} />
           <div className="ai-systematic-method-note" data-testid="note-ai-systematic-method">
             <div>
-              <strong>系統化判讀流程</strong>
+                <strong>怎麼判斷</strong>
               <p>
-                先核對行情時間與來源，再比較大盤和個股多期間證據；同時列出相反線索與資料缺口，最後檢查方向、價位和風險是否一致。不以持倉成本、舊高低點或單日波動取代證據；信心只表示線索一致程度，不是勝率。
+                  先比大盤、個股近 5／20／60 日和量價，再看可用的財報與法人資料。線索打架就不硬猜；信心代表線索一致程度，不是勝率。
               </p>
             </div>
             <a
@@ -2916,17 +3036,17 @@ function StockAiAssessmentPanel({
           </div>
           <details className="ai-detail-disclosure">
             <summary>
-              <span>查看 AI 分析理由與風險</span>
-              <small>{granvilleCandidateCount} 個明確均線候選 · {granvilleContextualCount} 項距離情境 · {assessment.signals.length} 項有利線索 · {assessment.risks.length} 項風險</small>
+              <span>看關鍵數據和風險</span>
+              <small>{assessment.signals.length} 項支持線索 · {assessment.risks.length} 項反向風險</small>
             </summary>
             <div className="ai-detail-narrative">
-              <strong>AI 分析摘要</strong>
+              <strong>方向理由</strong>
               <p>{assessment.summary}</p>
-              <strong>AI 操作細節</strong>
+              <strong>操作方式</strong>
               <p>{assessment.actionText}</p>
             </div>
             <div className={`ai-market-context ${assessment.marketInfluence}`}>
-              <span>{marketInfluenceLabels[assessment.marketInfluence]}</span>
+              <span>{marketInfluenceLabel}</span>
               <p>{assessment.marketSummary}</p>
             </div>
             <section
@@ -3287,11 +3407,26 @@ function DecisionCalculator({ latestPrice, atr, currency, symbol, priceBasis, as
   const normalizedSymbol = symbol.replace(/\.(TW|TWO)$/i, "");
   const isOfficialCloseReference =
     assessment?.referenceType === "official_daily_close";
+  const calculatorReferencePrice =
+    isOfficialCloseReference && assessment
+      ? assessment.referencePrice
+      : latestPrice;
   const canEvaluateBuyPrice =
     Boolean(assessment) &&
     Number.isFinite(values.buy) &&
     values.buy > 0;
   const canAskPosition = Boolean(assessment) && Number.isSafeInteger(values.shares) && values.shares > 0 && Number.isFinite(values.basis) && values.basis > 0;
+  const positionActionLabels: Record<string, string> = {
+    add: "建議加碼",
+    hold: "續抱",
+    no_add: "續抱，不加碼",
+    reduce: "減碼",
+    take_profit: "停利",
+    stop_loss: "停損",
+    exit: "退出持股",
+    wait: "先等待",
+    insufficient: "資料不足，先不加碼",
+  };
   const buyVerdictMatchesCurrentInput = matchesBuyVerdictInputs(
     buyPriceVerdictMutation.data,
     symbol,
@@ -3363,6 +3498,59 @@ function DecisionCalculator({ latestPrice, atr, currency, symbol, priceBasis, as
     Boolean(assessment.takeProfitReason) &&
     assessment.stopLossPrice < assessment.entryPrice &&
     assessment.entryPrice < assessment.takeProfitPrice;
+  const validatedAiPlan =
+    hasCompleteAiPricePlan && assessment ? assessment : undefined;
+  const validatedEntryPrice = validatedAiPlan?.entryPrice ?? null;
+  const canUseAggressiveEntryTier = Boolean(
+    validatedAiPlan &&
+      validatedEntryPrice !== null &&
+      validatedAiPlan.biasLevel === "strong_bullish" &&
+      validatedAiPlan.referencePrice <= validatedEntryPrice,
+  );
+  const entryTierOnePrice = validatedAiPlan && validatedEntryPrice !== null
+    ? canUseAggressiveEntryTier
+      ? validatedAiPlan.referencePrice
+      : validatedEntryPrice
+    : null;
+  const supportObservationPrice =
+    validatedAiPlan?.tradeScenarios.supportPrice ?? null;
+  const entryTierTwoPrice =
+    validatedAiPlan &&
+    validatedEntryPrice !== null &&
+    supportObservationPrice !== null &&
+    supportObservationPrice < validatedEntryPrice
+      ? supportObservationPrice
+      : null;
+  const suggestedEntryRange =
+    entryTierOnePrice !== null && entryTierTwoPrice !== null
+      ? `${formatNumber(Math.min(entryTierOnePrice, entryTierTwoPrice), 2)} ~ ${formatNumber(Math.max(entryTierOnePrice, entryTierTwoPrice), 2)} 元`
+      : entryTierOnePrice !== null
+        ? `${formatNumber(entryTierOnePrice, 2)} 元`
+        : null;
+  const volumePriceEvidence = assessment?.scorecard.items
+    .filter((item) => item.id === "volume-breakout" || item.id === "obv-trend")
+    .map((item) => item.note)
+    .filter(Boolean)
+    .join(" ");
+  const closeConclusion = validatedAiPlan
+    ? {
+        label: "🟢 建議逢低買入",
+        detail: "僅供下一交易日條件參考；開盤後先核對即時成交價，條件仍成立才考慮進場。",
+        tone: "positive",
+      }
+    : assessment?.action === "sell" ||
+        assessment?.biasLevel === "bearish" ||
+        assessment?.biasLevel === "strong_bearish"
+      ? {
+          label: "🔴 暫緩買進",
+          detail: "目前判讀偏弱，先不要把觀察價當成進場訊號；等走勢與量價條件改善後再評估。",
+          tone: "negative",
+        }
+      : {
+          label: "🟡 逢低佈局觀望",
+          detail: "目前沒有完整有效的買進計畫；先觀察回測支撐與量價變化，不預設買進價。",
+          tone: "cautious",
+        };
   const confidenceLabel = assessment?.confidence === "high"
     ? "高"
     : assessment?.confidence === "medium"
@@ -3370,70 +3558,23 @@ function DecisionCalculator({ latestPrice, atr, currency, symbol, priceBasis, as
       : assessment?.confidence === "low"
         ? "低"
         : "不適用";
-  const historicalBacktest = assessment?.historicalStrategyBacktest;
-  const toDateTimestamp = (value: Date | string | null | undefined) => {
-    if (value === null || value === undefined) return null;
-    const timestamp =
-      value instanceof Date ? value.getTime() : Date.parse(value);
-    return Number.isFinite(timestamp) ? timestamp : null;
-  };
-  const backtestStartTimestamp = toDateTimestamp(
-    historicalBacktest?.dataStartDate,
-  );
-  const backtestEndTimestamp = toDateTimestamp(
-    historicalBacktest?.dataEndDate,
-  );
-  const backtestWindowDays =
-    backtestStartTimestamp !== null && backtestEndTimestamp !== null
-      ? Math.max(
-          0,
-          Math.floor(
-            (backtestEndTimestamp - backtestStartTimestamp) / 86_400_000,
-          ),
-        )
-      : 0;
-  const backtestTradesNeeded = historicalBacktest
-    ? Math.max(
-        0,
-        historicalBacktest.minimumSampleCount -
-          historicalBacktest.sampleCount,
-      )
-    : 0;
-  const backtestDaysNeeded = historicalBacktest
-    ? Math.max(
-        0,
-        historicalBacktest.minimumDataWindowDays - backtestWindowDays,
-      )
-    : 0;
-  const backtestStatusLabel =
-    historicalBacktest &&
-    historicalBacktest.sampleCount >=
-      historicalBacktest.minimumSampleCount &&
-    backtestDaysNeeded > 0
-      ? "歷史期間不足"
-      : historicalBacktest
-        ? `樣本 ${historicalBacktest.sampleCount}/${historicalBacktest.minimumSampleCount}`
-        : "資料不足";
-  const backtestInsufficientReason = !historicalBacktest
-    ? "目前沒有足夠資料可以回測。"
-    : backtestTradesNeeded > 0 && backtestDaysNeeded === 0
-      ? `已有 ${historicalBacktest.sampleCount}/${historicalBacktest.minimumSampleCount} 筆完整交易；資料期間已足夠，還差 ${backtestTradesNeeded} 筆符合規則的完整交易。30 天行情不等於 30 筆交易。`
-      : backtestTradesNeeded > 0
-        ? `已有 ${historicalBacktest.sampleCount}/${historicalBacktest.minimumSampleCount} 筆完整交易，資料期間 ${backtestWindowDays}/${historicalBacktest.minimumDataWindowDays} 日；還需更多歷史資料與符合規則的交易。30 天行情不等於 30 筆交易。`
-        : `完整交易樣本已足夠，但資料期間只有 ${backtestWindowDays}/${historicalBacktest.minimumDataWindowDays} 日，還需更多歷史日線。`;
   return (
     <Panel title="交易試算" eyebrow={`${symbol} · 投入金額與風險`} className="calculator-panel">
       <div className="calculator-intro"><Calculator size={18} /><span>盤中優先依近期可驗證的成交價判讀；盤後以最近官方收盤價檢查你輸入的買進價，作為下一交易日的條件參考。開盤後仍要用最新成交價重新核對。下方只做試算，不會替你買賣股票。</span></div>
       <div className="calculator-quote-reference" data-testid="text-calculator-current-quote">
         <span>{isOfficialCloseReference ? "最近官方收盤參考" : "盤中成交參考"}</span>
-        <strong>{latestPrice === null ? "—" : formatNumber(latestPrice, 2)}</strong>
-        <small>{priceBasis}；用來估算目前持有損益，不會自動填入買進價。</small>
+        <strong>{calculatorReferencePrice === null ? "—" : formatNumber(calculatorReferencePrice, 2)}</strong>
+        <small>
+          {isOfficialCloseReference && assessment
+            ? `${formatDate(assessment.quoteAsOf)} 官方收盤價；盤後成交不作為 AI 判讀基準。`
+            : `${priceBasis}；用來估算目前持有損益，不會自動填入買進價。`}
+        </small>
       </div>
       {assessment && (
         <div className="ai-price-plan" data-testid="panel-ai-price-plan">
           <div className="ai-price-plan-head">
             <div>
-               <strong>AI 價格參考</strong>
+              <strong>AI 進場策略與風控</strong>
               <p>{assessment.pricePlanMessage}</p>
             </div>
             {hasCompleteAiPricePlan && (
@@ -3447,140 +3588,58 @@ function DecisionCalculator({ latestPrice, atr, currency, symbol, priceBasis, as
               </button>
             )}
           </div>
-          <div className="historical-backtest" data-testid="panel-historical-strategy-backtest">
-            <div className="historical-backtest-heading">
-              <div>
-                <strong>固定規則歷史回測</strong>
-                <small>獨立於 AI 判讀；不是 AI 建議的勝率</small>
-              </div>
-              {assessment.historicalStrategyBacktest.status === "calibrated" ? (
-                <span className="historical-backtest-status calibrated">
-                  歷史觀察{" "}
-                  {assessment.historicalStrategyBacktest.winRatePercent?.toFixed(1)}%
-                </span>
-              ) : (
-                <span className="historical-backtest-status">
-                  {backtestStatusLabel}
-                </span>
-              )}
-            </div>
-            {assessment.historicalStrategyBacktest.status === "calibrated" ? (
-              <p className="historical-backtest-result" data-testid="text-historical-backtest-result">
-                固定規則回測有{" "}
-                {assessment.historicalStrategyBacktest.wins}/
-                {assessment.historicalStrategyBacktest.sampleCount} 筆交易扣除費用後獲利；
-                這是歷史結果，不代表未來勝率。
-              </p>
-            ) : (
-              <p className="historical-backtest-result" data-testid="text-historical-backtest-result">
-                {backtestInsufficientReason}
-              </p>
-            )}
-            <small className="historical-backtest-period">
-              資料期間：{assessment.historicalStrategyBacktest.dataStartDate ? formatDate(assessment.historicalStrategyBacktest.dataStartDate) : "—"} 至{" "}
-              {assessment.historicalStrategyBacktest.dataEndDate ? formatDate(assessment.historicalStrategyBacktest.dataEndDate) : "—"} · {assessment.historicalStrategyBacktest.source} ·
-              {" "}評估期 {assessment.historicalStrategyBacktest.evaluationTradingDays} 個交易日
-            </small>
-            <details className="historical-backtest-method">
-              <summary>查看回測規則與誤差限制</summary>
-              <div className="historical-backtest-method-copy">
-                {assessment.historicalStrategyBacktest.status === "calibrated" && (
-                  <small>
-                    95% 統計範圍：{assessment.historicalStrategyBacktest.confidenceIntervalLowPercent?.toFixed(1)}%–{assessment.historicalStrategyBacktest.confidenceIntervalHighPercent?.toFixed(1)}%。
-                  </small>
-                )}
-                <small>
-                  訊號：收盤高於 20 日平均價，且平均價高於 5 個交易日前；下一交易日開盤進場。持倉期間不重複進場，固定條件未依這段歷史調整。
-                </small>
-                <small>
-                  出場：依 14 日平均波動設停損／停利；若同一天同時碰到兩者，保守地按停損先出。
-                </small>
-                <small>
-                  獲利計算已扣標準買賣手續費與賣出稅；未計滑價、券商最低手續費、折扣及除權息調整。
-                </small>
-              </div>
-            </details>
-          </div>
-          <div
-            className="historical-backtest forward-direction-validation"
-            data-testid="panel-ai-forward-direction-validation"
-          >
-            <div className="historical-backtest-heading">
-              <div>
-                <strong>AI 前向方向驗證</strong>
-                <small>以這項功能啟用後保存的 AI 判讀逐日核對，不是固定規則回測</small>
-              </div>
-              <span className="historical-backtest-status">
-                {assessment.forwardDirectionValidation.status === "collecting"
-                  ? "持續收集中"
-                  : "暫不可用"}
-              </span>
-            </div>
-            {assessment.forwardDirectionValidation.status === "unavailable" ? (
-              <p
-                className="historical-backtest-result"
-                data-testid="text-ai-forward-validation-unavailable"
+          <div className="ai-trade-plan-fields" data-testid="panel-ai-trade-plan-fields">
+            <section className="ai-trade-plan-field ai-trade-plan-range">
+              <span>AI 建議買進價格區間</span>
+              <strong>{suggestedEntryRange ?? "暫不提供有效買進區間"}</strong>
+              <small>
+                {validatedAiPlan
+                  ? entryTierTwoPrice !== null
+                    ? `T1 ${canUseAggressiveEntryTier ? "進取現價" : "AI 主要進場參考"} ${formatNumber(entryTierOnePrice!, 2)} 元 · T2 20 日低點觀察 ${formatNumber(entryTierTwoPrice, 2)} 元。兩者是不同情境，區間內價格不代表都適合買進。`
+                    : `T1 ${canUseAggressiveEntryTier ? "進取現價" : "AI 主要進場參考"} ${formatNumber(entryTierOnePrice!, 2)} 元；目前沒有低於 AI 進場價的有效 20 日支撐參考，故不補造第二階買價。`
+                  : "本次沒有通過完整價位檢查的買進方案；支撐觀察位不會代替買進建議。"}
+              </small>
+            </section>
+            <section className="ai-trade-plan-field">
+              <span>最佳進場策略</span>
+              <strong>
+                {validatedAiPlan
+                  ? canUseAggressiveEntryTier
+                    ? "動能偏強，可參考現價；條件轉弱或高於計畫價就不追"
+                    : "等待回到 AI 進場參考附近，再確認條件後分批"
+                  : assessment.actionText}
+              </strong>
+              {validatedAiPlan && <small>{validatedAiPlan.entryReason}</small>}
+              <small className="ai-trade-plan-volume">
+                量價參考：{volumePriceEvidence || "本次沒有足夠資料可列出成交量線索。"}
+              </small>
+            </section>
+            {isOfficialCloseReference && (
+              <section
+                className={`ai-trade-plan-field ai-trade-plan-conclusion ${closeConclusion.tone}`}
+                data-testid="panel-ai-close-conclusion"
               >
-                {assessment.forwardDirectionValidation.message ??
-                  "前向驗證資料目前無法使用。"}
-              </p>
-            ) : (
-              <>
-                <div className="forward-direction-horizon-list">
-                  {assessment.forwardDirectionValidation.horizons.map(
-                    (horizon) => (
-                      <div
-                        className="forward-direction-horizon"
-                        key={horizon.horizonDays}
-                        data-testid={`panel-ai-forward-validation-day-${horizon.horizonDays}`}
-                      >
-                        <span>第 {horizon.horizonDays} 個交易日</span>
-                        <strong>
-                          {horizon.hitRatePercent === null
-                            ? `樣本 ${horizon.evaluatedDirectionalForecastCount}/${assessment.forwardDirectionValidation.minimumSampleCount}`
-                            : `${horizon.hitRatePercent.toFixed(1)}%`}
-                        </strong>
-                        <small>
-                          命中 {horizon.correctForecastCount}/
-                          {horizon.evaluatedDirectionalForecastCount} · 待結算{" "}
-                          {horizon.pendingDirectionalForecastCount}
-                        </small>
-                        <small>
-                          不計方向：中性 {horizon.neutralForecastCount}、資料不足{" "}
-                          {horizon.insufficientForecastCount}
-                        </small>
-                      </div>
-                    ),
-                  )}
-                </div>
-                <small className="forward-direction-validation-note">
-                  {assessment.forwardDirectionValidation.methodNote}
-                </small>
-                <small className="forward-direction-validation-source">
-                  日線來源：{assessment.forwardDirectionValidation.source}
-                </small>
-              </>
+                <span>收盤後買進結論</span>
+                <strong>{closeConclusion.label}</strong>
+                <small>{closeConclusion.detail}</small>
+              </section>
             )}
+            <section className="ai-trade-plan-field">
+              <span>核心防守價位</span>
+              <strong>
+                {validatedAiPlan
+                  ? `停損 ${formatNumber(validatedAiPlan.stopLossPrice, 2)} 元 · 目標 ${formatNumber(validatedAiPlan.takeProfitPrice, 2)} 元`
+                  : "停損與目標價暫不提供"}
+              </strong>
+              <small>
+                {validatedAiPlan
+                  ? `${validatedAiPlan.stopLossReason} ${validatedAiPlan.takeProfitReason}`
+                  : "避免用未通過檢查的價位當作執行依據。"}
+              </small>
+            </section>
           </div>
           {hasCompleteAiPricePlan ? (
             <>
-              <div className="ai-price-plan-grid">
-                <div>
-                  <span>買進參考價</span>
-                  <strong>{formatNumber(assessment.entryPrice, 2)}</strong>
-                  <small>{assessment.entryReason}</small>
-                </div>
-                <div>
-                  <span>停損參考</span>
-                  <strong>{formatNumber(assessment.stopLossPrice, 2)}</strong>
-                  <small>{assessment.stopLossReason}</small>
-                </div>
-                <div>
-                  <span>目標賣出參考</span>
-                  <strong>{formatNumber(assessment.takeProfitPrice, 2)}</strong>
-                  <small>{assessment.takeProfitReason}</small>
-                </div>
-              </div>
               <div className="ai-entry-confidence" data-testid="panel-ai-entry-confidence">
                 <div className="ai-entry-confidence-heading">
                   <div>
@@ -3603,7 +3662,7 @@ function DecisionCalculator({ latestPrice, atr, currency, symbol, priceBasis, as
                   </div>
                 )}
                 <small className="ai-entry-confidence-note">
-                  AI 信心尚未用歷史訊號校準，不代表獲利機率。
+                  AI 價位是主觀估計，未經統計校準；20 日低點只是技術觀察，不代表買進訊號或保證獲利。
                 </small>
               </div>
               <div className="ai-stop-discipline" data-testid="text-ai-stop-discipline">
@@ -3633,36 +3692,6 @@ function DecisionCalculator({ latestPrice, atr, currency, symbol, priceBasis, as
                 <small>{assessment.actionReferenceReason}</small>
               </div>
             )}
-        </div>
-      )}
-      {isOfficialCloseReference && assessment && (
-        <div
-          className="ai-close-assessment"
-          data-testid="panel-ai-official-close-assessment"
-          aria-live="polite"
-        >
-          <div className="ai-close-assessment-heading">
-            <strong>收盤後買進結論</strong>
-            <AiProviderBadge provider={assessment.aiProvider} compact />
-          </div>
-          <p className="ai-close-assessment-action">
-            {assessment.action === "buy"
-              ? "今天不直接買進"
-              : "目前不建議買進"}
-          </p>
-          <p>
-            {assessment.action === "buy"
-              ? "方向偏向上漲，但目前只有收盤價。下一交易日確認最新成交價後，再檢查是否符合買進條件。"
-              : "AI 目前不是買進方向；如果已持有，請查看下方的持倉評估。"}
-          </p>
-          <small>
-            依據：{formatDate(assessment.quoteAsOf)} 官方收盤價 {formatNumber(assessment.referencePrice, 2)} 元；不是下一交易日的成交價。
-          </small>
-          <details className="ai-close-assessment-details">
-            <summary>查看 AI 分析細節</summary>
-            <p>{assessment.summary}</p>
-            <p>{assessment.actionText}</p>
-          </details>
         </div>
       )}
       <div className="form-grid">
@@ -3848,11 +3877,17 @@ function DecisionCalculator({ latestPrice, atr, currency, symbol, priceBasis, as
         {assistantMutation.isPending && <AiProviderBadge provider={null} compact state="loading" />}
         {assistantMutation.isError && <AiProviderBadge provider={null} compact state="unavailable" />}
       </div>
-      {assistantMutation.isPending && <div className="position-ai-state" role="status" data-testid="status-position-ai-loading"><SkeletonBlock className="h-12" /><span>正在整理此標的的行情與研究脈絡；備用服務可能延長回覆時間，最長等待約 75 秒，逾時後可重試。</span></div>}
+      {assistantMutation.isPending && <div className="position-ai-state" role="status" data-testid="status-position-ai-loading"><SkeletonBlock className="h-12" /><span>正在整理行情並嘗試 Gemini；若無法回覆，會依序切換 OpenRouter Free、Groq Free 等備援模型，最長等待約 75 秒。</span></div>}
       {assistantMutation.isError && <div className="position-ai-error" role="alert" data-testid="error-position-ai">{parseAiRequestError(assistantMutation.error)} <button type="button" className="text-button" onClick={askPositionSuggestion} data-testid="button-retry-position-ai">重試</button></div>}
       {assistantMutation.data?.symbol.replace(/\.(TW|TWO)$/i, "") === normalizedSymbol && !assistantMutation.isPending && !assistantMutation.isError && (
         <section className="position-ai-reply" data-testid="panel-position-ai-reply">
-          <div className="position-ai-reply-head"><strong>持倉操作建議</strong><AiProviderBadge provider={assistantMutation.data.aiProvider} compact /></div>
+          <div className="position-ai-reply-head">
+            <strong>持倉操作建議</strong>
+            <AiProviderBadge provider={assistantMutation.data.aiProvider} compact />
+          </div>
+          <strong className="position-ai-action" data-testid="text-position-ai-action">
+            {positionActionLabels[assistantMutation.data.positionAction] ?? "資料不足，先不加碼"}
+          </strong>
           <p className="position-ai-answer">{assistantMutation.data.answer}</p>
           <div className="position-ai-context">
             <strong>參考資料</strong>
@@ -3953,6 +3988,35 @@ function Dashboard() {
     setCollapsedCards((current) => ({ ...current, [cardId]: !current[cardId] }));
   };
 
+  const restoreCard = (cardId: CardId) => {
+    const parentCardId =
+      cardId === "market-summary" || cardId === "market-history" || cardId === "futures-strategy"
+        ? "market-analysis"
+        : cardId === "stock-metrics" ||
+            cardId === "research-data" ||
+            cardId === "ai-assessment" ||
+            cardId === "price-chart" ||
+            cardId === "volume-chart" ||
+            cardId === "technical-ledger"
+          ? "stock-analysis"
+          : null;
+    setCollapsedCards((current) => ({
+      ...current,
+      [cardId]: false,
+      ...(parentCardId ? { [parentCardId]: false } : {}),
+      ...(cardId === "market-analysis" &&
+      ["market-summary", "market-history", "futures-strategy"].every(
+        (childCardId) => current[childCardId as CardId] === true,
+      )
+        ? {
+            "market-summary": false,
+            "market-history": false,
+            "futures-strategy": false,
+          }
+        : {}),
+    }));
+  };
+
   const updateScopedCardOrder = (scope: CardId[], scopedOrder: string[]) => {
     setCardOrder((current) => {
       let nextIndex = 0;
@@ -4023,23 +4087,34 @@ function Dashboard() {
   const [isPremarketSummaryHours, setIsPremarketSummaryHours] = useState(isTaipeiPremarketSummaryHours);
   const [isClosingSummaryHours, setIsClosingSummaryHours] = useState(isTaipeiClosingSummaryHours);
   useEffect(() => {
-    const updateWindow = () => { setIsPremarketSummaryHours(isTaipeiPremarketSummaryHours()); setIsClosingSummaryHours(isTaipeiClosingSummaryHours()); };
+    const updateWindow = () => {
+      setIsPremarketSummaryHours(isTaipeiPremarketSummaryHours());
+      setIsClosingSummaryHours(isTaipeiClosingSummaryHours());
+    };
     updateWindow();
     const timer = window.setInterval(updateWindow, 15_000);
     return () => window.clearInterval(timer);
   }, []);
-  const marketAiDailySummaryQuery = useGetMarketAiDailySummary({
-    query: {
+  const dailySummaryMode: MarketDailySummaryMode = isClosingSummaryHours ? "closing" : "premarket";
+  const marketAiDailySummaryQuery = useGetMarketAiDailySummary(
+    { mode: dailySummaryMode },
+    {
+      query: {
       enabled: isSignedIn && (isPremarketSummaryHours || isClosingSummaryHours),
-      queryKey: ["/api/market/ai-daily-summary", isClosingSummaryHours ? "closing" : "premarket"],
+      queryKey: ["/api/market/ai-daily-summary", dailySummaryMode],
+      queryFn: ({ signal }) => getMarketAiDailySummary(
+        { mode: dailySummaryMode },
+        { signal },
+      ),
       staleTime: 30 * 60_000,
       refetchInterval: 30 * 60_000,
       refetchIntervalInBackground: false,
       refetchOnMount: "always",
       refetchOnWindowFocus: false,
       retry: false,
+      },
     },
-  });
+  );
   const marketIntradayQuery = useGetMarketIntraday({
     query: {
       queryKey: ["/api/market/intraday"],
@@ -4117,6 +4192,7 @@ function Dashboard() {
         retry: false,
         queryKey: ["/api/stocks/ai-assessment", { symbol: selectedSymbol }] as const,
         enabled: isSignedIn,
+        staleTime: 60_000,
       },
     },
   );
@@ -4136,9 +4212,16 @@ function Dashboard() {
       latestStockQuoteAgeMs >= -60_000 &&
       latestStockQuoteAgeMs <= 90_000,
   );
+  const aiAssessmentQuoteAgeMs = rawStockAiAssessment?.quoteAsOf
+    ? Date.now() - Date.parse(rawStockAiAssessment.quoteAsOf)
+    : Number.POSITIVE_INFINITY;
   const aiAssessmentNeedsLiveQuote = Boolean(
     taiwanStockSessionOpen &&
-      rawStockAiAssessment?.referenceType === "official_daily_close",
+      rawStockAiAssessment &&
+      (rawStockAiAssessment.referenceType !== "verified_trade" ||
+        !Number.isFinite(aiAssessmentQuoteAgeMs) ||
+        aiAssessmentQuoteAgeMs < -60_000 ||
+        aiAssessmentQuoteAgeMs > 90_000),
   );
   const visibleStockAiAssessment =
     rawStockAiAssessment &&
@@ -4168,7 +4251,7 @@ function Dashboard() {
     const now = Date.now();
     const lastRefreshAt =
       automaticAiRefreshTimes.current.get(selectedSymbol) ?? 0;
-    if (now - lastRefreshAt < 5 * 60_000) return;
+    if (now - lastRefreshAt < 60_000) return;
 
     automaticAiRefreshTimes.current.set(selectedSymbol, now);
     if (automaticAiRefreshTimes.current.size > 100) {
@@ -4189,6 +4272,7 @@ function Dashboard() {
     stockAiAssessmentQuery.isError,
     stockAiAssessmentQuery.isFetching,
     stockAiAssessmentQuery.refetch,
+    stockHistoryQuery.dataUpdatedAt,
     taiwanStockSessionOpen,
   ]);
 
@@ -4227,7 +4311,17 @@ function Dashboard() {
       .filter((target) => !target.classList.contains("is-visible"))
       .forEach((target) => observer.observe(target));
     return () => observer.disconnect();
-  }, [overviewQuery.data, summaryQuery.data, marketIntradayQuery.data, marketHistoryQuery.data, stockHistoryQuery.data, stockResearchDataQuery.data, stockAiAssessmentQuery.data]);
+  }, [
+    overviewQuery.data,
+    summaryQuery.data,
+    marketIntradayQuery.data,
+    marketHistoryQuery.data,
+    stockHistoryQuery.data,
+    stockResearchDataQuery.data,
+    stockAiAssessmentQuery.data,
+    collapsedCards,
+    cardOrder,
+  ]);
 
   useEffect(() => {
     const dismiss = (event: MouseEvent) => {
@@ -4318,7 +4412,15 @@ function Dashboard() {
   const dashboardSectionScope: CardId[] = ["stock-search", "market-index", "market-intraday", "market-analysis", "stock-analysis"];
   const marketCardScope: CardId[] = ["market-summary", "market-history", "futures-strategy"];
   const marketSummaryCollapsed = collapsedCards["market-summary"] === true;
+  const allMarketCardsCollapsed = marketCardScope.every(
+    (cardId) => collapsedCards[cardId] === true,
+  );
   const stockCardScope: CardId[] = ["stock-metrics", "research-data", "ai-assessment", "price-chart", "volume-chart", "technical-ledger"];
+  const collapsedCardIds = cardOrder.filter(
+    (cardId) =>
+      collapsedCards[cardId] === true &&
+      (cardId === "stock-analysis" || CARD_DOCK_TITLES[cardId] !== undefined),
+  );
 
   if (!isSignedIn) {
     return (
@@ -4425,8 +4527,8 @@ function Dashboard() {
       </header>
 
       <main className="dashboard-main">
-        <div className="headline-row" data-reveal>
-          <div>
+        <div className={`headline-row${collapsedCardIds.length ? " has-collapsed-cards" : ""}`} data-reveal>
+          <div className="headline-copy">
             <p className="section-eyebrow">台股分析 / 01</p>
             <DashboardLoginIntro onDismiss={() => setDashboardIntroDismissed(true)} />
             <div className="freshness-row">
@@ -4435,6 +4537,36 @@ function Dashboard() {
               <span className="source-badge muted-badge">公開財報與投資人每日買賣資料</span>
             </div>
           </div>
+          {collapsedCardIds.length > 0 && (
+            <aside className="collapsed-card-dock" aria-label="已收起的功能卡片">
+              <div className="collapsed-card-dock-heading">
+                <strong>已收起</strong>
+                <span>點選標題即可展開</span>
+              </div>
+              <div className="collapsed-card-dock-list">
+                {collapsedCardIds.map((cardId) => {
+                  const title =
+                    cardId === "stock-analysis"
+                      ? `${selectedSymbol} 個股走勢`
+                      : CARD_DOCK_TITLES[cardId] ?? cardId;
+                  return (
+                    <button
+                      key={cardId}
+                      type="button"
+                      className="collapsed-card-button"
+                      onClick={() => restoreCard(cardId)}
+                      aria-label={`展開「${title}」`}
+                      title={`展開「${title}」`}
+                      data-testid={`button-restore-card-${cardId}`}
+                    >
+                      <span>{title}</span>
+                      <ChevronDown size={13} aria-hidden="true" />
+                    </button>
+                  );
+                })}
+              </div>
+            </aside>
+          )}
         </div>
         {dashboardIntroDismissed && (isPremarketSummaryHours || isClosingSummaryHours) && (
           <MarketPremarketSummaryCard
@@ -4442,7 +4574,7 @@ function Dashboard() {
             loading={marketAiDailySummaryQuery.isLoading}
             error={marketAiDailySummaryQuery.isError && !marketAiDailySummaryQuery.data ? marketAiDailySummaryQuery.error : null}
             onRetry={() => void marketAiDailySummaryQuery.refetch()}
-            closing={isClosingSummaryHours}
+            mode={dailySummaryMode}
           />
         )}
 
@@ -4591,10 +4723,12 @@ function Dashboard() {
             </div>
           ))}
 
-          {renderWorkspaceCard("market-intraday", "加權指數即時分時", dashboardSectionScope, (
+          {renderWorkspaceCard("market-intraday", "加權指數分時", dashboardSectionScope, (
             <Panel
-              title="加權指數即時分時"
-              eyebrow={`${marketIntradayQuery.data?.date ?? "台灣加權指數"} · 09:00 起至最新分鐘`}
+              title="加權指數分時"
+              eyebrow={marketIntradayQuery.data
+                ? `${marketIntradayQuery.data.date} · ${marketIntradayQuery.data.sessionType === "historical" ? "最近交易日分時" : "09:00 起至最新分鐘"}`
+                : "台灣加權指數 · 09:00 起至最新分鐘"}
               action={<span className="intraday-refresh-label">{marketIntradayQuery.isFetching ? "更新中" : "每 15 秒更新"}</span>}
             >
               {!marketIntradayQuery.data && marketIntradayQuery.isLoading ? (
@@ -4614,7 +4748,7 @@ function Dashboard() {
             </Panel>
           ))}
 
-        {renderWorkspaceCard("market-analysis", "02 台股大盤走勢", dashboardSectionScope, (
+        {!allMarketCardsCollapsed && renderWorkspaceCard("market-analysis", "02 台股大盤走勢", dashboardSectionScope, (
           <div className="market-grid card-workspace" data-reveal>
             <CardOrderWorkspace
               storageKey={`${CARD_ORDER_STORAGE_KEY}:market`}
@@ -4626,6 +4760,7 @@ function Dashboard() {
           {renderWorkspaceCard("market-summary", "大盤概況", marketCardScope, (
             <SummaryPanel
               summary={summaryQuery.data}
+              dailySummary={marketAiDailySummaryQuery.data}
               loading={summaryQuery.isLoading}
               error={summaryQuery.isError && !summaryQuery.data ? summaryQuery.error : null}
               onRetry={() => void summaryQuery.refetch()}
@@ -4716,11 +4851,15 @@ function Dashboard() {
               {renderWorkspaceCard("ai-assessment", "AI 個股方向參考", stockCardScope, (
                 <StockAiAssessmentPanel
                   assessment={visibleStockAiAssessment}
-                  loading={
+                  loading={!visibleStockAiAssessment && (
                     stockAiAssessmentQuery.isLoading ||
                     stockAiAssessmentQuery.isFetching ||
                     isRefreshingAiForLiveQuote
-                  }
+                  )}
+                  refreshing={Boolean(
+                    visibleStockAiAssessment &&
+                    (stockAiAssessmentQuery.isFetching || isRefreshingAiForLiveQuote)
+                  )}
                   error={
                     stockAiAssessmentQuery.isFetching ||
                     isRefreshingAiForLiveQuote
@@ -4903,7 +5042,7 @@ function MarketHistoryChart({ bars, dark, compact }: { bars: Bar[]; dark: boolea
   );
 }
 
-function PageNavigation({ active }: { active: "dashboard" | "watchlist" | "portfolio" | "quantLab" | "systemSettings" }) {
+function PageNavigation({ active }: { active: "dashboard" | "aiPicks" | "watchlist" | "portfolio" | "etfSavings" | "quantLab" | "research" | "systemSettings" }) {
   const { entries, profile, isSignedIn, isLoading, accountError } = useAccountWatchlist();
   const { signOut } = useClerk();
   const railNavRef = useRef<HTMLElement | null>(null);
@@ -4944,6 +5083,9 @@ function PageNavigation({ active }: { active: "dashboard" | "watchlist" | "portf
       <Link href="/" className={`rail-link ${active === "dashboard" ? "active" : ""}`} aria-current={active === "dashboard" ? "page" : undefined} data-testid="link-nav-dashboard">
         <LayoutDashboard size={17} /><span>市場分析</span><small>01</small>
       </Link>
+      <Link href="/ai-picks" className={`rail-link ${active === "aiPicks" ? "active" : ""}`} aria-current={active === "aiPicks" ? "page" : undefined} data-testid="link-nav-ai-picks">
+        <Sparkles size={17} /><span>AI 選股</span><small>02</small>
+      </Link>
       {isSignedIn && (
         <>
           <Link href="/watchlist" className={`rail-link ${active === "watchlist" ? "active" : ""}`} aria-current={active === "watchlist" ? "page" : undefined} data-testid="link-nav-watchlist">
@@ -4952,13 +5094,19 @@ function PageNavigation({ active }: { active: "dashboard" | "watchlist" | "portf
           <Link href="/portfolio" className={`rail-link ${active === "portfolio" ? "active" : ""}`} aria-current={active === "portfolio" ? "page" : undefined} data-testid="link-nav-portfolio">
             <Briefcase size={17} /><span>交易試算</span><small>03</small>
           </Link>
+          <Link href="/etf-savings" className={`rail-link ${active === "etfSavings" ? "active" : ""}`} aria-current={active === "etfSavings" ? "page" : undefined} data-testid="link-nav-etf-savings">
+            <BarChart3 size={17} /><span>ETF 存股</span><small>04</small>
+          </Link>
           <Link href="/quant-lab" className={`rail-link ${active === "quantLab" ? "active" : ""}`} aria-current={active === "quantLab" ? "page" : undefined} data-testid="link-nav-quant-lab">
-            <FlaskConical size={17} /><span>量化研究室</span><small>04</small>
+            <FlaskConical size={17} /><span>量化研究室</span><small>05</small>
+          </Link>
+          <Link href="/research-office" className={`rail-link ${active === "research" ? "active" : ""}`} aria-current={active === "research" ? "page" : undefined} data-testid="link-nav-research-office">
+            <MessageCircle size={17} /><span>CEO 研究部</span><small>06</small>
           </Link>
         </>
       )}
       <Link href="/system-settings" className={`rail-link ${active === "systemSettings" ? "active" : ""}`} aria-current={active === "systemSettings" ? "page" : undefined} data-testid="link-nav-system-settings">
-        <Settings size={17} /><span>系統設定</span><small>05</small>
+        <Settings size={17} /><span>系統設定</span><small>07</small>
       </Link>
       {isLoading ? (
         <div className="rail-link rail-account-loading" role="status" data-testid="status-account-loading">正在確認帳號…</div>
@@ -5034,6 +5182,7 @@ function WatchlistStockInsight({ entry }: { entry: WatchlistEntry }) {
       query: {
         queryKey: ["/api/stocks/ai-assessment", { symbol: entry.symbol }] as const,
         retry: false,
+        staleTime: 60_000,
       },
     },
   );
@@ -5045,9 +5194,9 @@ function WatchlistStockInsight({ entry }: { entry: WatchlistEntry }) {
       ? assessmentQuery.data
       : undefined;
   const directionLabels: Record<StockAiAssessment["direction"], string> = {
-    bullish: "上漲訊號",
-    bearish: "下跌訊號",
-    neutral: "無明確漲跌訊號",
+    bullish: "偏多",
+    bearish: "偏空",
+    neutral: "方向不明",
     insufficient: "資料不足",
   };
   const performance = [
@@ -5308,7 +5457,7 @@ function PortfolioPage() {
     },
   });
   const assessmentQuery = useGetStockAiAssessment({ symbol: assessmentSymbol }, {
-    query: { queryKey: ["/api/stocks/ai-assessment", { symbol: assessmentSymbol }] as const, retry: false, enabled: isSignedIn },
+    query: { queryKey: ["/api/stocks/ai-assessment", { symbol: assessmentSymbol }] as const, retry: false, enabled: isSignedIn, staleTime: 60_000 },
   });
   const bars = history.data?.bars ?? [];
   const latest = bars.at(-1);
@@ -5360,6 +5509,13 @@ function PortfolioPage() {
       </div>
       <p className="route-footnote">AI 回覆會標示使用的服務、參考資料與日期。AI 不會替你交易，也不提供個人化投資建議。</p>
     </main>
+  </div>;
+}
+
+function EtfSavingsRoute() {
+  return <div className="app-shell terminal-grid">
+    <PageNavigation active="etfSavings" />
+    <EtfSavingsPage />
   </div>;
 }
 
@@ -5437,15 +5593,70 @@ function SystemSettingsRoute() {
   );
 }
 
+function AiPicksRoute() {
+  return (
+    <div className="app-shell terminal-grid">
+      <PageNavigation active="aiPicks" />
+      <AiPicksPage />
+    </div>
+  );
+}
+
+function ResearchOfficeRoute() {
+  const { isLoaded, isSignedIn } = useAuth();
+  const query = useGetAccountResearchJobs({
+    query: {
+      queryKey: ["account", "research-jobs"],
+      enabled: Boolean(isLoaded && isSignedIn),
+      retry: false,
+      staleTime: 0,
+      refetchOnMount: "always",
+      refetchInterval: (current) =>
+        current.state.data?.some((job) => job.status === "queued" || job.status === "running")
+          ? 2_500
+          : false,
+    },
+    request: { credentials: "include" },
+  });
+  const jobs = (query.data ?? []) as ResearchOfficeJob[];
+  const [selectedJobId, setSelectedJobId] = useState<ResearchOfficeJob["id"] | null>(null);
+  useEffect(() => {
+    if (jobs.length && !jobs.some((job) => job.id === selectedJobId)) {
+      setSelectedJobId(jobs[0].id);
+    }
+  }, [jobs, selectedJobId]);
+
+  return (
+    <div className="app-shell terminal-grid">
+      <PageNavigation active="research" />
+      <ResearchOfficePage
+        jobs={jobs}
+        selectedJobId={selectedJobId}
+        onSelectJob={setSelectedJobId}
+        isLoading={!isLoaded || query.isLoading}
+        onRefresh={async () => { await query.refetch(); }}
+        error={isLoaded && !isSignedIn
+          ? "請先登入，才能查看帳號與已連結 LINE 的研究紀錄。"
+          : query.isError
+            ? "研究紀錄暫時無法載入，請確認登入狀態後重試。"
+            : null}
+      />
+    </div>
+  );
+}
+
 function Router() {
   return (
     <ErrorBoundary>
       <>
         <Switch>
           <Route path="/" component={Dashboard} />
+          <Route path="/ai-picks" component={AiPicksRoute} />
           <Route path="/watchlist" component={WatchlistPage} />
           <Route path="/portfolio" component={PortfolioPage} />
+          <Route path="/etf-savings" component={EtfSavingsRoute} />
           <Route path="/quant-lab" component={QuantLabRoute} />
+          <Route path="/research-office" component={ResearchOfficeRoute} />
           <Route path="/system-settings" component={SystemSettingsRoute} />
           <Route path="/sign-in/*?" component={SignInPage} />
           <Route path="/accept-invitation/*?" component={AcceptInvitationPage} />

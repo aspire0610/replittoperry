@@ -1,0 +1,12 @@
+---
+name: Programmatic stock backtests
+description: User's rule for calculating historical hit rates from official market data rather than generating retrospective AI forecasts.
+---
+
+For the dashboard's daily AI pending list, use the confirmed signal: recent bullish SMC structure within five trading sessions or a current bullish OB/unfilled FVG support-zone touch; volume ratio >1.2, with no upper cap; R/R >=1.5. Backtest entry at the next session's open and inspect the following 10 trading sessions: first target touch wins, first stop touch loses, same-day touches of both lose, and no-touch outcomes are excluded from the win-rate denominator but reported separately. Require at least 5 settled samples and at least 50% wins per ticker; disclose the small sample and do not present it as robust evidence. Let AI research company news and select up to five; never fill missing slots with unqualified candidates.
+
+Keep prospective AI direction validation separate from the deterministic 10-session target/stop backtest. Save the first prediction for each ticker per Taiwan trading date, including probability, quote reference, provider, and method version. Settle after the fifth subsequent official trading-session close. Never backfill AI forecasts by asking a model about historical dates. Show the AI's measured direction hit rate only after at least 100 settled forward outcomes, with a 95% Wilson interval and Brier score; clearly note that same-date picks are correlated. Do not use that separate forward metric as an eligibility gate for the daily pending list. Bump the forecast method version after changing prospective AI scoring logic.
+
+**Why:** The user specified the daily signal, next-open entry, 10-session target/stop settlement, and in 2026-10-21 lowered the settled-sample floor to 5 to address zero candidates. AI reliability must still be measured prospectively rather than by retrospective model-generated labels.
+
+**How to apply:** Keep AI's current estimate distinct from observed strategy win rates. Use official bars for local calculations and forward settlement. For the daily pending list, missing or unverified market data excludes the candidate; no-touch outcomes remain visible but outside the denominator. Keep the five-settled-sample/50%-win gate and label small samples; never fill slots with unqualified names. Price levels remain conditional plans, not a guarantee or automatic broker order. A scan must run on a trading day to add prospective snapshots.

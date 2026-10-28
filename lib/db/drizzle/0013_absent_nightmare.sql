@@ -1,0 +1,1 @@
+ALTER TABLE "line_assistant_conversations" ADD COLUMN "owner_user_id" text;

@@ -1,0 +1,1 @@
+ALTER TABLE "market_wide_ai_pick_forecasts" ADD COLUMN "method_version" text DEFAULT 'v1' NOT NULL;

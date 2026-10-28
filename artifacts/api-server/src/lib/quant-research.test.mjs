@@ -19,6 +19,44 @@ import {
   resolveQuantTickerFilter,
 } from "./quant-ticker-filter.ts";
 import { fetchOfficialJson } from "./official-json-fetch.ts";
+import {
+  calculateMonteCarloRisk,
+  createWalkForwardWindows,
+} from "./quant-validation.ts";
+
+test("creates expanding walk-forward windows without overlapping validation periods", () => {
+  const dates = Array.from({ length: 80 }, (_, index) =>
+    new Date(Date.UTC(2026, 0, index + 1)).toISOString().slice(0, 10),
+  );
+  const folds = createWalkForwardWindows(dates, 3);
+  assert.equal(folds.length, 3);
+  assert.equal(folds[0].trainEndDate, dates[19]);
+  assert.equal(folds[0].validationStartDate, dates[20]);
+  assert.equal(folds[1].trainEndDate, dates[39]);
+  assert.equal(folds[1].validationStartDate, dates[40]);
+  assert.equal(folds[2].trainEndDate, dates[59]);
+  assert.equal(folds[2].validationEndDate, dates.at(-1));
+});
+
+test("bootstraps reproducible Monte Carlo summaries from out-of-sample daily returns", () => {
+  const curve = Array.from({ length: 31 }, (_, index) => ({
+    equity: 100_000 * (1 + (index % 2 === 0 ? 0.002 : -0.001)),
+  }));
+  const first = calculateMonteCarloRisk([curve], "seed", 500);
+  const second = calculateMonteCarloRisk([curve], "seed", 500);
+  assert.deepEqual(first, second);
+  assert.equal(first.simulationCount, 500);
+  assert.equal(first.sampledSessions, 30);
+  assert.equal(first.terminalReturnBuckets.reduce((sum, bucket) => sum + bucket.count, 0), 500);
+  assert.ok(first.probabilityOfLossPercent !== null);
+});
+
+test("does not publish Monte Carlo estimates with fewer than 20 observations", () => {
+  const result = calculateMonteCarloRisk([Array.from({ length: 10 }, (_, index) => ({ equity: 100 + index }))], "short");
+  assert.equal(result.simulationCount, 0);
+  assert.equal(result.probabilityOfLossPercent, null);
+  assert.equal(result.sampledSessions, 9);
+});
 
 test("follows redirects between approved official exchange hosts", async () => {
   const requests = [];

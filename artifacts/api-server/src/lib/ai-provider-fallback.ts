@@ -1,5 +1,10 @@
 import { logger } from "./logger.js";
 import OpenAI from "openai";
+import {
+  acquireProviderSlot,
+  releaseProviderSlot,
+  setProviderCooldown,
+} from "./ai-provider-coordination.js";
 
 const DEFAULT_PROVIDER_TIMEOUT_MS = 15_000;
 const DEFAULT_FALLBACK_BUDGET_MS = 12_000;
@@ -13,10 +18,7 @@ type ProviderFailureKind =
   | "invalid_response"
   | "empty_response"
   | "invalid_output";
-const providerCooldowns = new Map<
-  string,
-  { until: number; status: number }
->();
+const MAX_CONCURRENT_REQUESTS_PER_PROVIDER = 2;
 
 type AiProviderFallbackRequest = {
   operation: string;
@@ -32,6 +34,7 @@ type AiProviderFallbackRequest = {
   geminiTimeoutMs?: number;
   geminiModelTimeoutMs?: number;
   geminiModels?: readonly string[];
+  nvidiaNimTimeoutMs?: number;
   groqTimeoutMs?: number;
   groqMaxOutputTokens?: number;
   groqModel?: string;
@@ -56,7 +59,8 @@ export type AiProviderName =
   | "groq"
   | "ollama"
   | "openrouter"
-  | "gemini";
+  | "gemini"
+  | "nvidia_nim";
 
 export type AiProviderResult = {
   text: string | null;
@@ -137,12 +141,35 @@ class GroqRequestError extends Error {
   }
 }
 
+class NvidiaNimRequestError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly failureKind: ProviderFailureKind = "http",
+  ) {
+    super(message);
+    this.name = "NvidiaNimRequestError";
+  }
+}
+
 export class AiProviderFallbackError extends Error {
   readonly status: 429 | 502 | 504;
+  readonly failures: Array<{
+    status: number | null;
+    failureKind: ProviderFailureKind | null;
+  }>;
 
-  constructor(message: string, status: 429 | 502 | 504 = 502) {
+  constructor(
+    message: string,
+    status: 429 | 502 | 504 = 502,
+    failures: Array<{
+      status: number | null;
+      failureKind: ProviderFailureKind | null;
+    }> = [],
+  ) {
     super(message);
     this.status = status;
+    this.failures = failures;
     this.name = "AiProviderFallbackError";
   }
 }
@@ -167,6 +194,27 @@ function statusFrom(error: unknown): number | null {
     return null;
   }
   return error.status;
+}
+
+function failureKindFrom(error: unknown): ProviderFailureKind | null {
+  if (
+    typeof error !== "object" ||
+    error === null ||
+    !("failureKind" in error) ||
+    typeof error.failureKind !== "string"
+  ) {
+    return null;
+  }
+  return [
+    "timeout",
+    "connection",
+    "http",
+    "invalid_response",
+    "empty_response",
+    "invalid_output",
+  ].includes(error.failureKind)
+    ? error.failureKind as ProviderFailureKind
+    : null;
 }
 
 function isTimeoutError(error: unknown): boolean {
@@ -207,6 +255,12 @@ function providerTimeoutMs(
         request.timeoutMs ??
         DEFAULT_PROVIDER_TIMEOUT_MS
       );
+    case "nvidia_nim":
+      return (
+        request.nvidiaNimTimeoutMs ??
+        request.timeoutMs ??
+        DEFAULT_PROVIDER_TIMEOUT_MS
+      );
     case "1min_ai":
       return (
         request.oneMinAiTimeoutMs ??
@@ -233,7 +287,9 @@ function providerTimeoutMs(
       );
     case "groq":
       return Math.min(
-        request.groqTimeoutMs ?? request.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS,
+        request.groqTimeoutMs ??
+          request.timeoutMs ??
+          DEFAULT_PROVIDER_TIMEOUT_MS,
         6_000,
       );
     default:
@@ -249,6 +305,7 @@ function requestWithProviderTimeout(
     ...request,
     timeoutMs,
     geminiTimeoutMs: timeoutMs,
+    nvidiaNimTimeoutMs: timeoutMs,
     oneMinAiTimeoutMs: timeoutMs,
     agnesAiTimeoutMs: timeoutMs,
     ollamaTimeoutMs: timeoutMs,
@@ -527,17 +584,19 @@ async function generateGeminiModel(
   return { text, provider: "gemini" };
 }
 
-async function generateOneMinAi(
+const NVIDIA_NIM_MODEL = "google/gemma-4-31b-it";
+
+async function generateNvidiaNim(
   apiKey: string,
   request: AiProviderFallbackRequest,
 ): Promise<AiProviderResult> {
   const timeout =
-    request.oneMinAiTimeoutMs ??
+    request.nvidiaNimTimeoutMs ??
     request.timeoutMs ??
     DEFAULT_PROVIDER_TIMEOUT_MS;
   const client = new OpenAI({
     apiKey,
-    baseURL: "https://api.1min.ai/openai/v1",
+    baseURL: "https://integrate.api.nvidia.com/v1",
     timeout,
     maxRetries: 0,
     fetch: (...args) => globalThis.fetch(...args),
@@ -546,7 +605,7 @@ async function generateOneMinAi(
   let response;
   try {
     response = await client.chat.completions.create({
-      model: "qwen3-8b",
+      model: NVIDIA_NIM_MODEL,
       messages: [
         { role: "system", content: requestInstructions(request) },
         { role: "user", content: request.input },
@@ -557,11 +616,65 @@ async function generateOneMinAi(
       stream: false,
     }, request.signal ? { signal: request.signal } : undefined);
   } catch (error) {
-    const timedOut =
-      error instanceof Error &&
-      ["APIConnectionTimeoutError", "TimeoutError", "AbortError"].includes(
-        error.name,
-      );
+    const timedOut = isTimeoutError(error);
+    const status = statusFrom(error) ?? (timedOut ? 504 : 502);
+    throw new NvidiaNimRequestError(
+      status,
+      timedOut
+        ? "NVIDIA NIM 分析逾時。"
+        : status !== 502
+          ? `NVIDIA NIM 回應 HTTP ${status}。`
+          : "NVIDIA NIM 目前無法連線。",
+      timedOut
+        ? "timeout"
+        : statusFrom(error) !== null
+          ? "http"
+          : "connection",
+    );
+  }
+
+  const responseText = response.choices?.[0]?.message?.content?.trim() ?? "";
+  const text = normalizeStructuredJsonOutput(
+    responseText,
+    request.validateOutput,
+  );
+  if (!text) {
+    throw new NvidiaNimRequestError(502, "NVIDIA NIM 沒有回傳可用內容。", "empty_response");
+  }
+  if (request.validateOutput && !request.validateOutput(text)) {
+    request.onInvalidOutput?.(text);
+    throw new NvidiaNimRequestError(502, "NVIDIA NIM 回傳內容未通過格式驗證。", "invalid_output");
+  }
+  return { text, provider: "nvidia_nim" };
+}
+
+async function generateOneMinAi(
+  apiKey: string,
+  request: AiProviderFallbackRequest,
+): Promise<AiProviderResult> {
+  const timeout =
+    request.oneMinAiTimeoutMs ??
+    request.timeoutMs ??
+    DEFAULT_PROVIDER_TIMEOUT_MS;
+  let response: Response;
+  try {
+    response = await fetch("https://api.1min.ai/api/chat-with-ai", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "API-KEY": apiKey,
+      },
+      body: JSON.stringify({
+        type: "UNIFY_CHAT_WITH_AI",
+        model: "qwen3.7-flash",
+        promptObject: {
+          prompt: `${requestInstructions(request)}\n\n使用者輸入：\n${request.input}`,
+        },
+      }),
+      signal: request.signal,
+    });
+  } catch (error) {
+    const timedOut = isTimeoutError(error);
     const status = statusFrom(error) ?? (timedOut ? 504 : 502);
     throw new OneMinAiRequestError(
       status,
@@ -578,7 +691,44 @@ async function generateOneMinAi(
     );
   }
 
-  const responseText = response.choices?.[0]?.message?.content?.trim() ?? "";
+  if (!response.ok) {
+    throw new OneMinAiRequestError(
+      response.status,
+      `1min.ai 回應 HTTP ${response.status}。`,
+      "http",
+    );
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OneMinAiRequestError(
+      502,
+      "1min.ai 回傳無法解析的回應。",
+      "invalid_response",
+    );
+  }
+
+  const aiRecord =
+    typeof payload === "object" && payload !== null && "aiRecord" in payload
+      ? payload.aiRecord
+      : null;
+  const recordDetail =
+    typeof aiRecord === "object" && aiRecord !== null && "aiRecordDetail" in aiRecord
+      ? aiRecord.aiRecordDetail
+      : null;
+  const resultObject =
+    typeof recordDetail === "object" &&
+    recordDetail !== null &&
+    "resultObject" in recordDetail
+      ? recordDetail.resultObject
+      : null;
+  const responseText = Array.isArray(resultObject)
+    ? resultObject.filter((part): part is string => typeof part === "string").join("\n").trim()
+    : typeof resultObject === "string"
+      ? resultObject.trim()
+      : "";
   const text = normalizeStructuredJsonOutput(
     responseText,
     request.validateOutput,
@@ -1093,6 +1243,7 @@ async function generateOllama(
 export function hasAiProviderCredentials(): boolean {
   return [
     process.env.GEMINI_API_KEY,
+    process.env.NVIDIA_NIM_API_KEY,
     process.env.ONEMIN_API_KEY,
     process.env.OPENROUTER_API_KEY,
     process.env.AGNES_AI_API_KEY,
@@ -1102,21 +1253,35 @@ export function hasAiProviderCredentials(): boolean {
 }
 
 export function resolveAiProviderFallbackBudgetMs(
-  operation: string,
-  requestedBudgetMs = DEFAULT_FALLBACK_BUDGET_MS,
+  request: Pick<
+    AiProviderFallbackRequest,
+    "operation" | "requestId" | "maxFallbackDurationMs"
+  >,
 ): number {
-  const cap = operation === "market_ai_daily_summary"
-    ? 24_000
-    : operation.startsWith("quant_")
-      ? 16_000
-      : 12_000;
-  return Math.max(1_000, Math.min(requestedBudgetMs, cap));
+  const isScheduledStockResearch =
+    typeof request.requestId === "string" &&
+    request.requestId.startsWith("stock-research-agent:");
+  const requestedFallbackBudgetMs = isScheduledStockResearch
+    ? Math.max(request.maxFallbackDurationMs ?? DEFAULT_FALLBACK_BUDGET_MS, 24_000)
+    : request.maxFallbackDurationMs ?? DEFAULT_FALLBACK_BUDGET_MS;
+  const fallbackBudgetCapMs = isScheduledStockResearch
+    ? 30_000
+    : request.operation === "market_ai_daily_summary"
+      ? 24_000
+      : request.operation.startsWith("quant_")
+        ? 16_000
+        : 12_000;
+  return Math.max(
+    1_000,
+    Math.min(requestedFallbackBudgetMs, fallbackBudgetCapMs),
+  );
 }
 
 export async function withAiProviderFallback(
   request: AiProviderFallbackRequest,
 ): Promise<AiProviderResult> {
   const geminiApiKey = process.env.GEMINI_API_KEY?.trim();
+  const nvidiaNimApiKey = process.env.NVIDIA_NIM_API_KEY?.trim();
   const oneMinApiKey = process.env.ONEMIN_API_KEY?.trim();
   const agnesAiApiKey = process.env.AGNES_AI_API_KEY?.trim();
   const ollamaApiKey = process.env.OLLAMA_API_KEY?.trim();
@@ -1140,6 +1305,14 @@ export async function withAiProviderFallback(
       timeoutMs: providerTimeoutMs("gemini", request),
       run: (attemptRequest) =>
         generateGemini(geminiApiKey ?? "", attemptRequest),
+    },
+    {
+      provider: "nvidia_nim",
+      label: "NVIDIA NIM",
+      apiKey: nvidiaNimApiKey,
+      timeoutMs: providerTimeoutMs("nvidia_nim", request),
+      run: (attemptRequest) =>
+        generateNvidiaNim(nvidiaNimApiKey ?? "", attemptRequest),
     },
     {
       provider: "openrouter",
@@ -1191,14 +1364,14 @@ export async function withAiProviderFallback(
         const provider = providerByName.get(providerName);
         return provider ? [provider] : [];
       })
-    : ["groq", "gemini", "openrouter"].flatMap((providerName) => {
-        const provider = providerByName.get(providerName as AiProviderName);
-        return provider ? [provider] : [];
-      });
+    : (["groq", "gemini", "openrouter"] as AiProviderName[]).flatMap(
+        (providerName) => {
+          const provider = providerByName.get(providerName);
+          return provider ? [provider] : [];
+        },
+      );
   const configuredProviders = orderedProviders.filter(
-    ({ apiKey, provider }) =>
-      apiKey &&
-      !(request.operation.startsWith("stock_") && provider === "1min_ai"),
+    ({ apiKey }) => apiKey,
   );
   if (configuredProviders.length === 0) {
     throw new AiProviderFallbackError(
@@ -1211,42 +1384,13 @@ export async function withAiProviderFallback(
   }
 
   const failures: Array<{ provider: string; error: unknown }> = [];
-  const fallbackBudgetMs = resolveAiProviderFallbackBudgetMs(
-    request.operation,
-    request.maxFallbackDurationMs,
-  );
+  const fallbackBudgetMs = resolveAiProviderFallbackBudgetMs(request);
   let fallbackDeadline: number | null = null;
   for (const [index, provider] of configuredProviders.entries()) {
     const isPrimaryProvider = index === 0;
     if (!isPrimaryProvider && fallbackDeadline === null) {
       fallbackDeadline = Date.now() + fallbackBudgetMs;
     }
-
-    const cooldownKey = `${request.operation}:${provider.provider}`;
-    const cooldown = providerCooldowns.get(cooldownKey);
-    if (cooldown && cooldown.until > Date.now()) {
-      failures.push({
-        provider: provider.label,
-        error: { status: cooldown.status },
-      });
-      request.onProviderProgress?.({
-        provider: provider.provider,
-        state: "skipped",
-        message: `${provider.label} 暫時略過，嘗試下一個 AI 服務。`,
-      });
-      logger.info(
-        {
-          operation: request.operation,
-          requestId: safeRequestId(request.requestId),
-          provider: provider.provider,
-          status: cooldown.status,
-          retryInMs: cooldown.until - Date.now(),
-        },
-        "Skipping AI provider during cooldown",
-      );
-      continue;
-    }
-    if (cooldown) providerCooldowns.delete(cooldownKey);
 
     const remainingMs = isPrimaryProvider
       ? Number.POSITIVE_INFINITY
@@ -1256,7 +1400,7 @@ export async function withAiProviderFallback(
         provider: "AI 備援時間上限",
         error: { status: 504 },
       });
-      logger.warn(
+      logger.info(
         {
           operation: request.operation,
           requestId: safeRequestId(request.requestId),
@@ -1270,6 +1414,36 @@ export async function withAiProviderFallback(
     const boundedTimeoutMs = isPrimaryProvider
       ? provider.timeoutMs
       : Math.max(1, Math.min(provider.timeoutMs, remainingMs));
+    const slot = await acquireProviderSlot(
+      provider.provider,
+      MAX_CONCURRENT_REQUESTS_PER_PROVIDER,
+      Math.max(30_000, boundedTimeoutMs + 10_000),
+    );
+    if (slot.state !== "acquired") {
+      const coolingDown = slot.state === "cooldown";
+      const status = coolingDown ? slot.status : 503;
+      failures.push({ provider: provider.label, error: { status } });
+      request.onProviderProgress?.({
+        provider: provider.provider,
+        state: "skipped",
+        message: coolingDown
+          ? `${provider.label} 暫時受限，正在切換備援服務。`
+          : `${provider.label} 同時請求已達上限，正在切換備援服務。`,
+      });
+      logger.info(
+        {
+          operation: request.operation,
+          requestId: safeRequestId(request.requestId),
+          provider: provider.provider,
+          reason: slot.state,
+          ...(slot.state === "cooldown"
+            ? { retryInMs: slot.remainingMs }
+            : {}),
+        },
+        "Skipping AI provider due to shared cooldown or concurrency limit",
+      );
+      continue;
+    }
     const attemptRequest = isPrimaryProvider
       ? request
       : requestWithProviderTimeout(request, boundedTimeoutMs);
@@ -1287,7 +1461,6 @@ export async function withAiProviderFallback(
         boundedTimeoutMs,
         provider.label,
       );
-      providerCooldowns.delete(cooldownKey);
       const resultLabel =
         request.operation === "quant_strategy_design"
           ? "策略"
@@ -1312,10 +1485,7 @@ export async function withAiProviderFallback(
       );
       const cooldownMs = cooldownForStatus(status);
       if (cooldownMs > 0) {
-        providerCooldowns.set(cooldownKey, {
-          until: Date.now() + cooldownMs,
-          status: status!,
-        });
+        await setProviderCooldown(provider.provider, cooldownMs, status!);
       }
       failures.push({ provider: provider.label, error });
       request.onProviderProgress?.({
@@ -1335,6 +1505,8 @@ export async function withAiProviderFallback(
         },
         "AI provider failed; trying the next configured provider",
       );
+    } finally {
+      await releaseProviderSlot(slot.lease);
     }
   }
 
@@ -1366,5 +1538,12 @@ export async function withAiProviderFallback(
       })),
     }),
   );
-  throw new AiProviderFallbackError(message, status);
+  throw new AiProviderFallbackError(
+    message,
+    status,
+    failures.map(({ error }) => ({
+      status: statusFrom(error),
+      failureKind: failureKindFrom(error),
+    })),
+  );
 }

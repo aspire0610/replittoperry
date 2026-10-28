@@ -1,7 +1,10 @@
 import {
   fetchFugleFuturesQuote,
   fetchFugleStockQuote,
+  fetchFugleStockHistoricalDailyRange,
+  fetchFugleTaiexHistoricalDailyBars,
   fetchFugleTaiexIndexTick,
+  fetchFugleTaiexHistoricalIntradayCandles,
   fetchFugleTaiexIntradayCandles,
   toFugleTaiexMarketQuote,
 } from "./fugle-market-data.js";
@@ -9,10 +12,88 @@ import {
   fetchTaifexDailyFuturesQuote,
   fetchTaifexFuturesQuotes,
 } from "./taifex-market-data.js";
+import { isTaiwanMarketClosed } from "./twse-holiday-calendar.js";
+import { parseTwseMiIndexDailyClose } from "./official-twse-mi-index.js";
+import { fetchOfficialJson } from "./official-json-fetch.js";
+import { parseTpexDailyMarket } from "./quant-market-parse.js";
+import {
+  getMarketWideScanHistoryWindow,
+  hasAlignedRecentHistoryBars,
+} from "./market-wide-scan-history-window.js";
+import { logger } from "./logger.js";
 
 const STOCK_QUOTE_MAX_AGE_MS = 90_000;
+const FUTURES_QUOTE_BUDGET_MS = 14_000;
+const EXCHANGE_MONTH_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
+const MAX_CONCURRENT_EXCHANGE_HISTORY_REQUESTS = 6;
+const MAX_EXCHANGE_HISTORY_RETRY_AFTER_MS = 15_000;
+let activeExchangeHistoryRequests = 0;
+const exchangeHistoryWaiters: Array<() => void> = [];
+const exchangeMonthCache = new Map<string, {
+  loadedAt: number;
+  promise: Promise<string[][]>;
+}>();
 
-type SupportedRange = "1mo" | "3mo" | "6mo" | "1y";
+async function withExchangeHistoryRequestSlot<T>(
+  operation: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+  if (activeExchangeHistoryRequests >= MAX_CONCURRENT_EXCHANGE_HISTORY_REQUESTS) {
+    await new Promise<void>((resolve, reject) => {
+      const waiter = () => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      };
+      const onAbort = () => {
+        const index = exchangeHistoryWaiters.indexOf(waiter);
+        if (index >= 0) exchangeHistoryWaiters.splice(index, 1);
+        reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+      };
+      exchangeHistoryWaiters.push(waiter);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  } else {
+    activeExchangeHistoryRequests += 1;
+  }
+
+  try {
+    if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+    return await operation();
+  } finally {
+    const next = exchangeHistoryWaiters.shift();
+    if (next) next();
+    else activeExchangeHistoryRequests -= 1;
+  }
+}
+
+function retryAfterMilliseconds(response: Response): number | null {
+  const header = response.headers.get("retry-after");
+  if (!header) return null;
+  const seconds = Number(header);
+  const delay = Number.isFinite(seconds) ? seconds * 1_000 : Date.parse(header) - Date.now();
+  return Number.isFinite(delay) && delay > 0 ? delay : null;
+}
+
+type SupportedRange = "1mo" | "3mo" | "6mo" | "1y" | "3y" | "5y";
+const HISTORY_RANGE_CALENDAR_DAYS: Record<SupportedRange, number> = {
+  "1mo": 31,
+  "3mo": 93,
+  "6mo": 186,
+  "1y": 366,
+  "3y": 1_096,
+  "5y": 1_826,
+};
+const MIN_HISTORY_BARS_BY_RANGE: Record<SupportedRange, number> = {
+  "1mo": 15,
+  "3mo": 45,
+  "6mo": 90,
+  "1y": 180,
+  // Keep the generic 3-year view intact; market-wide scans use a separately
+  // validated 24-month-plus-warmup window.
+  "3y": 600,
+  "5y": 1_000,
+};
 
 type YahooBar = {
   date: string;
@@ -23,6 +104,28 @@ type YahooBar = {
   close: number;
   volume: number | null;
 };
+type YahooChartRange = SupportedRange | "5d";
+const yahooDailyBarCache = new Map<string, {
+  expiresAt: number;
+  promise: Promise<YahooBar[]>;
+}>();
+let yahooRequestTail: Promise<void> = Promise.resolve();
+let yahooRateLimitedUntil = 0;
+
+async function withYahooRequestSlot<T>(operation: () => Promise<T>): Promise<T> {
+  const previous = yahooRequestTail;
+  let release = () => {};
+  yahooRequestTail = new Promise<void>((resolve) => { release = resolve; });
+  await previous;
+  try {
+    if (Date.now() < yahooRateLimitedUntil) {
+      throw new Error("Yahoo Finance 暫時限制行情查詢");
+    }
+    return await operation();
+  } finally {
+    release();
+  }
+}
 
 type TwseQuoteRow = {
   c?: string;
@@ -32,6 +135,11 @@ type TwseQuoteRow = {
   d?: string;
   t?: string;
   tlong?: string;
+  ex?: string;
+  o?: string;
+  h?: string;
+  l?: string;
+  v?: string;
   trade?: {
     z?: string;
     t?: string;
@@ -84,6 +192,8 @@ type TwseDailyCloseRow = {
   Name?: string;
   ClosingPrice?: string;
   Change?: string;
+  TradeVolume?: string;
+  TradeValue?: string;
 };
 
 type TpexDailyCloseRow = {
@@ -92,6 +202,8 @@ type TpexDailyCloseRow = {
   CompanyName?: string;
   Close?: string;
   Change?: string;
+  TradingShares?: string;
+  TransactionAmount?: string;
 };
 
 type ExchangeDay = {
@@ -102,6 +214,12 @@ type ExchangeDay = {
   low: number;
   close: number;
   volume: number | null;
+  tradedValue?: number | null;
+};
+
+export type MarketWideRecentStockHistory = {
+  source: string;
+  barsBySymbol: Map<string, ExchangeDay[]>;
 };
 
 export class MarketDataError extends Error {
@@ -153,6 +271,7 @@ export type MarketIntradayHistoryData = {
   ticker: string;
   date: string;
   timeframe: "1m";
+  sessionType: "live" | "historical";
   source: string;
   previousClose: number;
   asOf: Date;
@@ -170,6 +289,11 @@ export type StockQuoteData = {
   previousClose: number | null;
   change: number | null;
   changePercent: number | null;
+  /** Cumulative session volume, normalized to shares. */
+  volume?: number | null;
+  openPrice?: number | null;
+  highPrice?: number | null;
+  lowPrice?: number | null;
   source: string;
   asOf: Date | null;
   available: boolean;
@@ -192,13 +316,24 @@ export type StockCatalogData = {
 export type OfficialDailyClose = {
   symbol: string;
   name: string;
+  exchange: "twse" | "tpex";
   close: number;
   change: number | null;
+  volume: number | null;
+  tradedValue: number | null;
 };
 
 export type OfficialDailyCloseData = {
   asOf: string;
   quotes: OfficialDailyClose[];
+};
+
+export type OfficialMarketScanSnapshot = {
+  asOf: string;
+  quotes: OfficialDailyClose[];
+  availableExchanges: Array<"TWSE" | "TPEx">;
+  unavailableExchanges: Array<"TWSE" | "TPEx">;
+  source?: string;
 };
 
 export type MarketSummaryData = {
@@ -216,6 +351,8 @@ export type MarketSummaryData = {
   ma20: number | null;
   ma60: number | null;
   ma120: number | null;
+  support20?: number | null;
+  resistance20?: number | null;
   score: number | null;
   status: "bullish" | "neutral" | "bearish" | "insufficient";
   factors: Array<{
@@ -230,7 +367,13 @@ export type MarketSummaryData = {
 const USER_AGENT =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36";
 const US_MARKET_INDICATOR_CACHE_TTL_MS = 45_000;
-const usMarketIndicatorConfigs = [
+type UsMarketIndicatorConfig = {
+  key: MarketQuoteData["key"];
+  name: string;
+  ticker: string;
+  nasdaqAssetClass: "stocks" | "index";
+};
+const usMarketIndicatorConfigs: UsMarketIndicatorConfig[] = [
   {
     key: "us_tsm_adr",
     name: "台積電 ADR",
@@ -243,8 +386,16 @@ const usMarketIndicatorConfigs = [
     ticker: "SOX",
     nasdaqAssetClass: "index",
   },
-] as const;
-type UsMarketIndicatorConfig = (typeof usMarketIndicatorConfigs)[number];
+];
+const usPremarketIndexConfigs: UsMarketIndicatorConfig[] = [
+  {
+    key: "us_sox",
+    name: "納斯達克綜合指數",
+    ticker: "COMP",
+    nasdaqAssetClass: "index",
+  },
+];
+export type UsPremarketIndex = Omit<MarketQuoteData, "key">;
 const usMarketIndicatorCache = new Map<
   string,
   { expiresAt: number; promise: Promise<MarketQuoteData> }
@@ -268,6 +419,17 @@ function exchangeNumber(value: string | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+async function finMindHttpError(response: Response, label: string): Promise<Error> {
+  let detail = "";
+  try {
+    const body = await response.clone().json() as { msg?: unknown };
+    if (typeof body.msg === "string") detail = body.msg.slice(0, 180);
+  } catch {
+    // Keep the status-only error if FinMind does not return JSON.
+  }
+  return new Error(`${label} HTTP ${response.status}${detail ? `：${detail}` : ""}`);
+}
+
 function numericText(value: string | undefined): number | null {
   if (!value || value === "-") return null;
   const parsed = Number(value);
@@ -278,7 +440,17 @@ async function fetchExchangeJson<T>(
   url: URL,
   cacheTtlMs = 90_000,
   sourceName = "臺灣證券交易所",
+  signal?: AbortSignal,
 ): Promise<T> {
+  if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+  if (signal) {
+    const response = await fetch(url, {
+      headers: { Accept: "application/json", "User-Agent": USER_AGENT },
+      signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+    });
+    if (!response.ok) throw new MarketDataError(`${sourceName}回應 HTTP ${response.status}`, 502);
+    return await response.json() as T;
+  }
   const key = url.toString();
   const cached = exchangeResponseCache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
@@ -286,13 +458,39 @@ async function fetchExchangeJson<T>(
   }
 
   const promise = (async (): Promise<T> => {
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        headers: { Accept: "application/json", "User-Agent": USER_AGENT },
-        signal: AbortSignal.timeout(10_000),
-      });
-    } catch {
+    let response: Response | null = null;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      response = null;
+      try {
+        response = await fetch(url, {
+          headers: { Accept: "application/json", "User-Agent": USER_AGENT },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (
+          response.ok ||
+          (![408, 425, 429, 500, 502, 503, 504].includes(response.status)) ||
+          attempt === 3
+        ) {
+          break;
+        }
+      } catch (error) {
+        if (attempt === 3) {
+          throw new MarketDataError(
+            `${sourceName}暫時無法連線：${error instanceof Error ? error.message : "連線失敗"}`,
+            502,
+          );
+        }
+      }
+      const retryAfter = response?.status === 429 && response
+        ? retryAfterMilliseconds(response)
+        : null;
+      if (retryAfter !== null && retryAfter > MAX_EXCHANGE_HISTORY_RETRY_AFTER_MS) break;
+      const delayMs = retryAfter ?? (
+        response?.status === 429 ? Math.min(1_000 * 2 ** attempt, 8_000) : 300 * (attempt + 1)
+      );
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    if (!response) {
       throw new MarketDataError(`${sourceName}暫時無法連線`, 502);
     }
     if (!response.ok) {
@@ -416,7 +614,7 @@ export async function getStockCatalog(): Promise<StockCatalogData> {
 }
 
 export async function getOfficialDailyCloseData(): Promise<OfficialDailyCloseData> {
-  const [twseRows, tpexRows] = await Promise.all([
+  const [twseResult, tpexResult] = await Promise.allSettled([
     fetchExchangeJson<TwseDailyCloseRow[]>(
       new URL("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"),
       0,
@@ -428,17 +626,85 @@ export async function getOfficialDailyCloseData(): Promise<OfficialDailyCloseDat
       "TPEx",
     ),
   ]);
-  if (!Array.isArray(twseRows) || !twseRows.length || !Array.isArray(tpexRows) || !tpexRows.length) {
-    throw new MarketDataError("交易所官方收盤資料目前不完整", 502);
+  let twseRows =
+    twseResult.status === "fulfilled" && Array.isArray(twseResult.value)
+      ? twseResult.value
+      : null;
+  let tpexRows =
+    tpexResult.status === "fulfilled" && Array.isArray(tpexResult.value)
+      ? tpexResult.value
+      : null;
+  let twseDate = rocCompactDateToIso(twseRows?.[0]?.Date);
+  let tpexDate = rocCompactDateToIso(tpexRows?.[0]?.Date);
+  const knownDates = [twseDate, tpexDate].filter(
+    (date): date is string => date !== null,
+  );
+  const expectedDate =
+    knownDates.sort().at(-1) ??
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Taipei",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+
+  if (!twseRows?.length || twseDate !== expectedDate) {
+    const fallbackUrl = new URL(
+      "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX",
+    );
+    fallbackUrl.searchParams.set("date", expectedDate.replaceAll("-", ""));
+    fallbackUrl.searchParams.set("type", "ALLBUT0999");
+    fallbackUrl.searchParams.set("response", "json");
+    const fallbackPayload = await fetchExchangeJson<unknown>(
+      fallbackUrl,
+      0,
+      "TWSE MI_INDEX",
+    );
+    twseRows = parseTwseMiIndexDailyClose(fallbackPayload, expectedDate);
+    twseDate = rocCompactDateToIso(twseRows[0]?.Date);
   }
 
-  const twseDate = rocCompactDateToIso(twseRows[0]?.Date);
-  const tpexDate = rocCompactDateToIso(tpexRows[0]?.Date);
-  if (!twseDate || !tpexDate || twseDate !== tpexDate) {
+  if (!tpexRows?.length || tpexDate !== expectedDate) {
+    const fallbackUrl = new URL(
+      "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes",
+    );
+    fallbackUrl.searchParams.set(
+      "date",
+      `${expectedDate.slice(0, 4)}/${expectedDate.slice(5, 7)}/${expectedDate.slice(8, 10)}`,
+    );
+    const fallbackPayload = await fetchOfficialJson(
+      fallbackUrl,
+      "tpex",
+      expectedDate,
+    );
+    const fallbackMarket = parseTpexDailyMarket(
+      fallbackPayload,
+      expectedDate,
+      fallbackUrl.toString(),
+    );
+    if (!fallbackMarket.quotes.length) {
+      throw new MarketDataError("TPEx 官方收盤資料沒有有效的股票報價", 502);
+    }
+    const [year, month, day] = expectedDate.split("-");
+    const rocDate = `${Number(year) - 1911}${month}${day}`;
+    tpexRows = fallbackMarket.quotes.map((quote) => ({
+      Date: rocDate,
+      SecuritiesCompanyCode: quote.symbol,
+      CompanyName: quote.name,
+      Close: String(quote.close),
+      Change: "",
+      TradingShares: String(quote.volume),
+      TransactionAmount: String(quote.turnover),
+    }));
+    tpexDate = expectedDate;
+  }
+  if (!twseDate || twseDate !== expectedDate || !tpexDate || tpexDate !== expectedDate) {
     throw new MarketDataError("上市與上櫃官方收盤資料日期不一致", 502);
   }
 
   const quotes: OfficialDailyClose[] = [];
+  let twseQuoteCount = 0;
+  let tpexQuoteCount = 0;
   for (const row of twseRows) {
     const symbol = row.Code?.trim().toUpperCase();
     const name = row.Name?.trim();
@@ -447,9 +713,13 @@ export async function getOfficialDailyCloseData(): Promise<OfficialDailyCloseDat
     quotes.push({
       symbol,
       name,
+      exchange: "twse",
       close,
       change: exchangeNumber(row.Change),
+      volume: exchangeNumber(row.TradeVolume),
+      tradedValue: exchangeNumber(row.TradeValue),
     });
+    twseQuoteCount += 1;
   }
   for (const row of tpexRows) {
     const symbol = row.SecuritiesCompanyCode?.trim().toUpperCase();
@@ -459,25 +729,244 @@ export async function getOfficialDailyCloseData(): Promise<OfficialDailyCloseDat
     quotes.push({
       symbol,
       name,
+      exchange: "tpex",
       close,
       change: exchangeNumber(row.Change),
+      volume: exchangeNumber(row.TradingShares),
+      tradedValue: exchangeNumber(row.TransactionAmount),
     });
+    tpexQuoteCount += 1;
   }
-  if (!quotes.length) {
-    throw new MarketDataError("官方收盤資料沒有有效的股票報價", 502);
+  if (twseQuoteCount === 0 || tpexQuoteCount === 0) {
+    throw new MarketDataError("官方收盤資料未同時涵蓋上市與上櫃行情", 502);
   }
   return { asOf: twseDate, quotes };
 }
 
-function exchangeMonths(range: SupportedRange): string[] {
-  const parts = new Intl.DateTimeFormat("en-US", {
+export async function getOfficialMarketScanSnapshot(): Promise<OfficialMarketScanSnapshot> {
+  const bounded = <T>(promise: Promise<T>, timeoutMs: number, source: string) =>
+    new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`${source}查詢逾時`)), timeoutMs);
+      promise.then(
+        (value) => { clearTimeout(timer); resolve(value); },
+        (error) => { clearTimeout(timer); reject(error); },
+      );
+    });
+  const [twseResult, tpexResult] = await Promise.allSettled([
+    bounded(fetchExchangeJson<TwseDailyCloseRow[]>(
+      new URL("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"),
+      0,
+      "TWSE",
+    ), 5_000, "TWSE"),
+    bounded(fetchExchangeJson<TpexDailyCloseRow[]>(
+      new URL("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes"),
+      0,
+      "TPEx",
+    ), 8_000, "TPEx"),
+  ]);
+  const reports: Array<{
+    exchange: "twse" | "tpex";
+    label: "TWSE" | "TPEx";
+    date: string;
+    quotes: OfficialDailyClose[];
+  }> = [];
+  const unavailableExchanges: Array<"TWSE" | "TPEx"> = [];
+
+  let twseRows =
+    twseResult.status === "fulfilled" && Array.isArray(twseResult.value)
+      ? twseResult.value
+      : null;
+  let twseDate = rocCompactDateToIso(twseRows?.[0]?.Date);
+  let twseReportSource = "TWSE 官方收盤";
+  const tpexRows =
+    tpexResult.status === "fulfilled" && Array.isArray(tpexResult.value)
+      ? tpexResult.value
+      : null;
+  const tpexDate = rocCompactDateToIso(tpexRows?.[0]?.Date);
+
+  if (tpexDate && twseDate && twseDate < tpexDate) {
+    const fallbackUrl = new URL(
+      "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX",
+    );
+    fallbackUrl.searchParams.set("date", tpexDate.replaceAll("-", ""));
+    fallbackUrl.searchParams.set("type", "ALLBUT0999");
+    fallbackUrl.searchParams.set("response", "json");
+    try {
+      const payload = await fetchExchangeJson<unknown>(
+        fallbackUrl,
+        0,
+        "TWSE MI_INDEX",
+      );
+      twseRows = parseTwseMiIndexDailyClose(payload, tpexDate);
+      twseDate = rocCompactDateToIso(twseRows[0]?.Date);
+    } catch (error) {
+      logger.warn(
+        { expectedDate: tpexDate, err: error },
+        "TWSE daily scan report is stale; MI_INDEX date repair failed",
+      );
+    }
+  }
+
+  const now = new Date();
+  const taipeiParts = new Intl.DateTimeFormat("en-US", {
     timeZone: "Asia/Taipei",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
     year: "numeric",
-    month: "numeric",
-  }).formatToParts(new Date());
-  const year = Number(parts.find((part) => part.type === "year")?.value);
-  const month = Number(parts.find((part) => part.type === "month")?.value);
-  const count = range === "1mo" ? 2 : range === "3mo" ? 4 : range === "6mo" ? 7 : 13;
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const taipeiPart = (type: string) =>
+    taipeiParts.find((part) => part.type === type)?.value ?? "";
+  const currentTaipeiDate = `${taipeiPart("year")}-${taipeiPart("month")}-${taipeiPart("day")}`;
+  const afterClose = Number(taipeiPart("hour")) * 60 + Number(taipeiPart("minute")) >= 13 * 60 + 30;
+  const marketClosed = afterClose ? await isTaiwanMarketClosed(now) : true;
+  const newestReportDate = [twseDate, tpexDate]
+    .filter((date): date is string => Boolean(date))
+    .sort()
+    .at(-1);
+  if (afterClose && marketClosed !== true && newestReportDate && newestReportDate < currentTaipeiDate) {
+    const fallbackUrl = new URL("https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX");
+    fallbackUrl.searchParams.set("date", currentTaipeiDate.replaceAll("-", ""));
+    fallbackUrl.searchParams.set("type", "ALLBUT0999");
+    fallbackUrl.searchParams.set("response", "json");
+    try {
+      const payload = await bounded(
+        fetchExchangeJson<unknown>(fallbackUrl, 0, "TWSE MI_INDEX current date"),
+        8_000,
+        "TWSE MI_INDEX current-date",
+      );
+      twseRows = parseTwseMiIndexDailyClose(payload, currentTaipeiDate);
+      twseDate = rocCompactDateToIso(twseRows[0]?.Date);
+      twseReportSource = "TWSE MI_INDEX 官方收盤";
+    } catch (error) {
+      logger.warn(
+        { expectedDate: currentTaipeiDate, newestReportDate, err: error },
+        "Official daily reports lagged; current-date TWSE MI_INDEX fallback unavailable",
+      );
+    }
+  }
+
+  if (twseRows && twseDate) {
+    const quotes = twseRows.flatMap((row): OfficialDailyClose[] => {
+      const symbol = row.Code?.trim().toUpperCase();
+      const name = row.Name?.trim();
+      const close = exchangeNumber(row.ClosingPrice);
+      if (!symbol || !name || close === null || close <= 0) return [];
+      return [{
+        symbol,
+        name,
+        exchange: "twse",
+        close,
+        change: exchangeNumber(row.Change),
+        volume: exchangeNumber(row.TradeVolume),
+        tradedValue: exchangeNumber(row.TradeValue),
+      }];
+    });
+    if (quotes.length) reports.push({ exchange: "twse", label: "TWSE", date: twseDate, quotes });
+    else unavailableExchanges.push("TWSE");
+  } else {
+    unavailableExchanges.push("TWSE");
+  }
+
+  if (tpexRows && tpexDate) {
+    const quotes = tpexRows.flatMap((row): OfficialDailyClose[] => {
+      const symbol = row.SecuritiesCompanyCode?.trim().toUpperCase();
+      const name = row.CompanyName?.trim();
+      const close = exchangeNumber(row.Close);
+      if (!symbol || !name || close === null || close <= 0) return [];
+      return [{
+        symbol,
+        name,
+        exchange: "tpex",
+        close,
+        change: exchangeNumber(row.Change),
+        volume: exchangeNumber(row.TradingShares),
+        tradedValue: exchangeNumber(row.TransactionAmount),
+      }];
+    });
+    if (quotes.length) reports.push({ exchange: "tpex", label: "TPEx", date: tpexDate, quotes });
+    else unavailableExchanges.push("TPEx");
+  } else {
+    unavailableExchanges.push("TPEx");
+  }
+
+  if (!reports.length) {
+    throw new MarketDataError("上市與上櫃官方收盤資料目前都無法取得", 502);
+  }
+  const asOf = reports.map((report) => report.date).sort().at(-1)!;
+  for (const report of reports) {
+    if (report.date !== asOf && !unavailableExchanges.includes(report.label)) {
+      unavailableExchanges.push(report.label);
+    }
+  }
+  const availableReports = reports.filter((report) => report.date === asOf);
+  if (unavailableExchanges.length > 0) {
+    try {
+      const supplemental = await getOfficialDailyCloseData();
+      const twseSupplementalRows = supplemental.quotes.filter((quote) => quote.exchange === "twse").length;
+      const tpexSupplementalRows = supplemental.quotes.filter((quote) => quote.exchange === "tpex").length;
+      const hasBothExchanges = twseSupplementalRows >= 500 && tpexSupplementalRows >= 500;
+      if (supplemental.asOf >= asOf && hasBothExchanges) {
+        return {
+          asOf: supplemental.asOf,
+          quotes: supplemental.quotes,
+          availableExchanges: ["TWSE", "TPEx"],
+          unavailableExchanges: [],
+          source: "TWSE + TPEx 官方收盤",
+        };
+      }
+      logger.warn(
+        {
+          expectedAtLeast: asOf,
+          supplementalDate: supplemental.asOf,
+          twseRows: twseSupplementalRows,
+          tpexRows: tpexSupplementalRows,
+        },
+        "Supplemental official market reports did not cover both exchanges on the latest date",
+      );
+    } catch (error) {
+      logger.warn(
+        { expectedAtLeast: asOf, err: error },
+        "Supplemental official market report lookup failed",
+      );
+    }
+  }
+  return {
+    asOf,
+    quotes: availableReports.flatMap((report) => report.quotes),
+    availableExchanges: availableReports.map((report) => report.label),
+    unavailableExchanges,
+    source: availableReports.map((report) =>
+      report.label === "TWSE" ? twseReportSource : "TPEx 官方收盤",
+    ).join(" + "),
+  };
+}
+
+function exchangeMonths(
+  range: SupportedRange,
+  anchorDate?: string,
+  countOverride?: number,
+): string[] {
+  const parts = anchorDate ? null : new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Taipei",
+        year: "numeric",
+        month: "2-digit",
+      }).formatToParts(new Date());
+  const year = anchorDate
+    ? Number(anchorDate.slice(0, 4))
+    : Number(parts?.find((part) => part.type === "year")?.value);
+  const month = anchorDate
+    ? Number(anchorDate.slice(5, 7))
+    : Number(parts?.find((part) => part.type === "month")?.value);
+  const count = countOverride ?? (
+    range === "1mo" ? 2 :
+    range === "3mo" ? 4 :
+    range === "6mo" ? 7 :
+    range === "1y" ? 13 :
+    range === "3y" ? 37 : 61
+  );
 
   return Array.from({ length: count }, (_, offset) => {
     const date = new Date(Date.UTC(year, month - 1 - offset, 1));
@@ -537,38 +1026,95 @@ function exchangeBar(
 }
 
 function rangeStartDate(range: SupportedRange): string {
-  const days = range === "1mo" ? 31 : range === "3mo" ? 93 : range === "6mo" ? 186 : 366;
+  const days =
+    range === "1mo" ? 31 :
+    range === "3mo" ? 93 :
+    range === "6mo" ? 186 :
+    range === "1y" ? 366 :
+    range === "3y" ? 1_096 : 1_826;
   return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 }
 
-function keepRange(days: ExchangeDay[], range: SupportedRange): ExchangeDay[] {
-  const startDate = rangeStartDate(range);
+function keepRange(
+  days: ExchangeDay[],
+  range: SupportedRange,
+  startDate = rangeStartDate(range),
+): ExchangeDay[] {
   return days.filter((bar) => bar.date >= startDate);
 }
 
 async function fetchTwseStockMonth(
   stockCode: string,
   month: string,
+  signal?: AbortSignal,
 ): Promise<string[][]> {
-  const url = new URL("https://www.twse.com.tw/exchangeReport/STOCK_DAY");
-  url.searchParams.set("response", "json");
-  url.searchParams.set("date", month);
-  url.searchParams.set("stockNo", stockCode);
-  const response = await fetchExchangeJson<ExchangeDailyResponse>(url);
-  return response.stat === "OK" ? response.data ?? [] : [];
+  return getCachedExchangeMonth(`twse:${stockCode}:${month}`, async () => {
+    const url = new URL("https://www.twse.com.tw/exchangeReport/STOCK_DAY");
+    url.searchParams.set("response", "json");
+    url.searchParams.set("date", month);
+    url.searchParams.set("stockNo", stockCode);
+    const response = await withExchangeHistoryRequestSlot(
+      () => fetchExchangeJson<ExchangeDailyResponse>(url, 90_000, "臺灣證券交易所", signal),
+      signal,
+    );
+    return response.stat === "OK" ? response.data ?? [] : [];
+  }, signal);
 }
 
 async function fetchTpexStockMonth(
   stockCode: string,
   month: string,
+  signal?: AbortSignal,
 ): Promise<string[][]> {
-  const url = new URL(
-    "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock",
-  );
-  url.searchParams.set("code", stockCode);
-  url.searchParams.set("date", `${month.slice(0, 4)}/${month.slice(4, 6)}/01`);
-  const response = await fetchExchangeJson<ExchangeDailyResponse>(url);
-  return response.tables?.[0]?.data ?? [];
+  return getCachedExchangeMonth(`tpex:${stockCode}:${month}`, async () => {
+    const url = new URL(
+      "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock",
+    );
+    url.searchParams.set("code", stockCode);
+    url.searchParams.set("date", `${month.slice(0, 4)}/${month.slice(4, 6)}/01`);
+    const response = await withExchangeHistoryRequestSlot(
+      () => fetchExchangeJson<ExchangeDailyResponse>(url, 90_000, "臺灣證券交易所", signal),
+      signal,
+    );
+    return response.tables?.[0]?.data ?? [];
+  }, signal);
+}
+
+async function getCachedExchangeMonth(
+  key: string,
+  load: () => Promise<string[][]>,
+  signal?: AbortSignal,
+): Promise<string[][]> {
+  if (signal) {
+    if (signal.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+    return load();
+  }
+  const taiwanParts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(new Date());
+  const currentMonthKey = `${taiwanParts.find((part) => part.type === "year")?.value}${taiwanParts.find((part) => part.type === "month")?.value}01`;
+  const ttlMs = key.endsWith(currentMonthKey) ? 60_000 : EXCHANGE_MONTH_CACHE_TTL_MS;
+  const cached = exchangeMonthCache.get(key);
+  if (cached && Date.now() - cached.loadedAt < ttlMs) {
+    return cached.promise;
+  }
+  const promise = load();
+  exchangeMonthCache.set(key, { loadedAt: Date.now(), promise });
+  try {
+    const rows = await promise;
+    if (exchangeMonthCache.size > 1_000) {
+      const oldest = exchangeMonthCache.keys().next().value;
+      if (oldest) exchangeMonthCache.delete(oldest);
+    }
+    return rows;
+  } catch (error) {
+    if (exchangeMonthCache.get(key)?.promise === promise) {
+      exchangeMonthCache.delete(key);
+    }
+    throw error;
+  }
 }
 
 async function fetchTwseTaiexMonth(month: string): Promise<string[][]> {
@@ -585,9 +1131,10 @@ async function getExchangeHistory(
   range: SupportedRange,
   fetchMonth: (month: string) => Promise<string[][]>,
   indices: { volume: number | null; open: number; high: number; low: number; close: number },
+  window?: { startDate: string; endDate: string; monthCount: number },
 ): Promise<ExchangeDay[]> {
-  const months = exchangeMonths(range);
-  const monthlyRows = await mapWithConcurrency(months, 3, fetchMonth);
+  const months = exchangeMonths(range, window?.endDate, window?.monthCount);
+  const monthlyRows = await mapWithConcurrency(months, 2, fetchMonth);
   const uniqueDays = new Map<string, ExchangeDay>();
   for (const row of monthlyRows.flat()) {
     const bar = exchangeBar(row, indices);
@@ -596,6 +1143,7 @@ async function getExchangeHistory(
   return keepRange(
     [...uniqueDays.values()].sort((left, right) => left.date.localeCompare(right.date)),
     range,
+    window?.startDate,
   );
 }
 
@@ -781,6 +1329,133 @@ export async function getStockQuote(
       );
     }
   }
+}
+
+export async function getMarketWideStockQuotes(
+  instruments: Array<Pick<OfficialDailyClose, "symbol" | "exchange">>,
+  now = new Date(),
+  onProgress?: (completed: number, total: number) => void,
+): Promise<Map<string, StockQuoteData>> {
+  const quotes = new Map<string, StockQuoteData>();
+  if (!instruments.length) return quotes;
+
+  const channels = [...new Map(instruments.map((instrument) => {
+    const symbol = instrument.symbol.trim().toUpperCase();
+    const exchange = instrument.exchange === "twse" ? "tse" : "otc";
+    return [`${exchange}_${symbol}.tw`, { symbol, exchange, instrumentExchange: instrument.exchange }] as const;
+  })).values()];
+  const batchSize = 80;
+  const batches = Array.from(
+    { length: Math.ceil(channels.length / batchSize) },
+    (_, index) => channels.slice(index * batchSize, (index + 1) * batchSize),
+  );
+  let nextBatch = 0;
+  let completed = 0;
+  await Promise.all(Array.from({ length: Math.min(2, batches.length) }, async () => {
+    while (nextBatch < batches.length) {
+      const batch = batches[nextBatch++]!;
+      const url = new URL("https://mis.twse.com.tw/stock/api/getStockInfo.jsp");
+      url.searchParams.set(
+        "ex_ch",
+        batch.map(({ exchange, symbol }) => `${exchange}_${symbol}.tw`).join("|"),
+      );
+      url.searchParams.set("json", "1");
+      url.searchParams.set("delay", "0");
+      url.searchParams.set("_", String(now.getTime()));
+      try {
+        let response: Response | null = null;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          try {
+            response = await fetch(url, {
+              headers: {
+                Accept: "application/json",
+                Referer: "https://mis.twse.com.tw/stock/index.jsp",
+                "User-Agent": USER_AGENT,
+              },
+              signal: AbortSignal.timeout(8_000),
+            });
+          } catch (error) {
+            if (attempt === 2) throw error;
+            await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
+            continue;
+          }
+          if (
+            response.ok ||
+            (![408, 425, 429, 500, 502, 503, 504].includes(response.status)) ||
+            attempt === 2
+          ) break;
+          const retryAfter = response.status === 429
+            ? retryAfterMilliseconds(response)
+            : null;
+          if (retryAfter !== null && retryAfter > MAX_EXCHANGE_HISTORY_RETRY_AFTER_MS) break;
+          await new Promise((resolve) => setTimeout(
+            resolve,
+            retryAfter ?? 300 * (attempt + 1),
+          ));
+        }
+        if (!response) throw new Error("TWSE MIS 批次報價未回應");
+        if (!response.ok) throw new Error(`TWSE MIS 批次報價 HTTP ${response.status}`);
+        const payload = await response.json() as TwseQuotePayload;
+        for (const row of payload.msgArray ?? []) {
+          const symbol = row.c?.trim().toUpperCase();
+          if (!symbol) continue;
+          const instrument = batch.find((item) => item.symbol === symbol);
+          if (!instrument || row.ex !== instrument.exchange) continue;
+
+          // The market-wide scan requires an actual trade timestamp and the
+          // cumulative session volume; quote-update-only rows are not eligible.
+          const price = numericText(row.trade?.z);
+          const volumeLots = numericText(row.v);
+          const date = row.d ?? "";
+          const time = row.trade?.t ?? "";
+          if (
+            price === null || price <= 0 ||
+            volumeLots === null || volumeLots <= 0 ||
+            !/^\d{8}$/.test(date) ||
+            !/^\d{2}:\d{2}:\d{2}$/.test(time)
+          ) continue;
+          const asOf = new Date(
+            `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}T${time}+08:00`,
+          );
+          if (Number.isNaN(asOf.getTime())) continue;
+          const previousClose = numericText(row.y);
+          if (previousClose === null || previousClose <= 0) continue;
+          const change = price - previousClose;
+          try {
+            const quote = validateStockQuoteFreshness({
+              name: row.n?.trim() || null,
+              price,
+              previousClose,
+              change,
+              changePercent: (change / previousClose) * 100,
+              // MIS reports cumulative volume in lots (1,000 shares).
+              volume: volumeLots * 1_000,
+              openPrice: numericText(row.o) ?? undefined,
+              highPrice: numericText(row.h) ?? undefined,
+              lowPrice: numericText(row.l) ?? undefined,
+              source: "TWSE MIS 批次 · 成交時間",
+              asOf,
+              available: true,
+              error: null,
+            }, new Date(), 180_000);
+            quotes.set(symbol, quote);
+          } catch {
+            // Exclude stale or malformed rows individually; one bad quote must
+            // not discard the rest of a successful provider batch.
+          }
+        }
+      } catch (error) {
+        logger.warn(
+          { err: error, batchSize: batch.length },
+          "Unable to fetch a TWSE MIS market-wide quote batch",
+        );
+      } finally {
+        completed += batch.length;
+        onProgress?.(completed, channels.length);
+      }
+    }
+  }));
+  return quotes;
 }
 
 export function isTaiwanStockSessionOpen(now = new Date()): boolean {
@@ -982,12 +1657,61 @@ function unavailableFuturesQuote(
   };
 }
 
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
+
 async function getFuturesQuotes(): Promise<MarketQuoteData[]> {
+  const marketClosed = await isTaiwanMarketClosed();
+  if (marketClosed === true) {
+    const deadline = Date.now() + FUTURES_QUOTE_BUDGET_MS;
+    return Promise.all(
+      (["day", "night"] as const).map(async (session) => {
+        try {
+          const quote = await withTimeout(
+            fetchTaifexDailyFuturesQuote(session),
+            deadline - Date.now(),
+            "TAIFEX 官方最近收盤價查詢逾時",
+          );
+          return quote ?? unavailableFuturesQuote(
+            session,
+            "休市日暫時無法取得 TAIFEX 官方最近收盤價。",
+          );
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "TAIFEX 官方日行情查詢失敗";
+          return unavailableFuturesQuote(session, `休市日暫無收盤報價：${message}`);
+        }
+      }),
+    );
+  }
+
+  const deadline = Date.now() + FUTURES_QUOTE_BUDGET_MS;
   const failures: string[] = [];
   let quotes: MarketQuoteData[] | null = null;
 
   try {
-    quotes = await fetchTaifexFuturesQuotes();
+    quotes = await withTimeout(
+      fetchTaifexFuturesQuotes(),
+      deadline - Date.now(),
+      "TAIFEX MIS 即時行情逾時",
+    );
   } catch (taifexError) {
     failures.push(
       taifexError instanceof Error
@@ -998,7 +1722,11 @@ async function getFuturesQuotes(): Promise<MarketQuoteData[]> {
 
   if (process.env.FUGLE_API_KEY?.trim() && (!quotes || quotes.some((quote) => !quote.available))) {
     try {
-      const fallbackQuote = await fetchFugleFuturesQuote();
+      const fallbackQuote = await withTimeout(
+        fetchFugleFuturesQuote(),
+        deadline - Date.now(),
+        "期貨即時備援來源逾時",
+      );
       const session = fallbackQuote.key === "futures_night" ? "night" : "day";
       const fallbackIndex = session === "day" ? 0 : 1;
       if (!quotes) {
@@ -1045,38 +1773,12 @@ async function getFuturesQuotes(): Promise<MarketQuoteData[]> {
 
   if (!quotes) {
     const error = failures.length
-      ? `${failures.join("；")}；尚未取得官方日行情收盤資料。`
-      : "即時期貨來源目前無可用報價，尚未取得官方日行情收盤資料。";
+      ? `${failures.join("；")}；目前沒有可驗證的即時期貨報價。`
+      : "即時期貨來源目前無可用報價。";
     quotes = [
       unavailableFuturesQuote("day", error),
       unavailableFuturesQuote("night", error),
     ];
-  }
-
-  for (const session of ["day", "night"] as const) {
-    const index = session === "day" ? 0 : 1;
-    const quote = quotes[index];
-    if (!quote || quote.available) continue;
-    try {
-      const dailyQuote = await fetchTaifexDailyFuturesQuote(session);
-      if (dailyQuote) {
-        quotes[index] = dailyQuote;
-      } else {
-        quotes[index] = {
-          ...quote,
-          error: `${quote.error ?? "沒有可用的即時成交快照"}；TAIFEX 官方日行情尚無可用的${session === "day" ? "日盤" : "夜盤"}最近收盤價。`,
-        };
-      }
-    } catch (dailyError) {
-      const dailyMessage =
-        dailyError instanceof Error
-          ? dailyError.message
-          : "TAIFEX 官方日行情查詢失敗";
-      quotes[index] = {
-        ...quote,
-        error: `${quote.error ?? "沒有可用的即時成交快照"}；${dailyMessage}`,
-      };
-    }
   }
 
   return quotes;
@@ -1348,6 +2050,84 @@ function getUsMarketIndicator(
   return promise;
 }
 
+const dowJonesConfig: UsMarketIndicatorConfig = {
+  key: "us_sox",
+  name: "道瓊工業指數",
+  ticker: "^DJI",
+  nasdaqAssetClass: "index",
+};
+
+async function getDowJonesIndicator(): Promise<UsPremarketIndex> {
+  try {
+    const response = await fetch(
+      "https://query1.finance.yahoo.com/v8/finance/chart/%5EDJI?range=5d&interval=1d",
+      { headers: { "User-Agent": USER_AGENT }, signal: AbortSignal.timeout(8_000) },
+    );
+    if (!response.ok) throw new Error(`Yahoo Finance HTTP ${response.status}`);
+    const payload = await response.json() as {
+      chart?: { result?: Array<{ meta?: {
+        symbol?: string;
+        regularMarketPrice?: number;
+        regularMarketTime?: number;
+        chartPreviousClose?: number;
+      } }> | null };
+    };
+    const meta = payload.chart?.result?.[0]?.meta;
+    const price = meta?.regularMarketPrice;
+    const previousClose = meta?.chartPreviousClose;
+    const asOf = meta?.regularMarketTime ? new Date(meta.regularMarketTime * 1_000) : null;
+    if (
+      meta?.symbol !== "^DJI" ||
+      !Number.isFinite(price) || price! <= 0 ||
+      !Number.isFinite(previousClose) || previousClose! <= 0 ||
+      !asOf || Number.isNaN(asOf.getTime())
+    ) {
+      throw new Error("Yahoo Finance 道瓊資料欄位不完整");
+    }
+    const change = price! - previousClose!;
+    return {
+      name: dowJonesConfig.name,
+      ticker: dowJonesConfig.ticker,
+      price: price!,
+      change,
+      changePercent: (change / previousClose!) * 100,
+      source: "Yahoo Finance · 道瓊指數",
+      asOf,
+      available: true,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      name: dowJonesConfig.name,
+      ticker: dowJonesConfig.ticker,
+      price: null,
+      change: null,
+      changePercent: null,
+      source: null,
+      asOf: null,
+      available: false,
+      error: error instanceof Error ? error.message : "道瓊資料暫不可用",
+    };
+  }
+}
+
+export async function getUsPremarketIndices(): Promise<{
+  nasdaq: UsPremarketIndex;
+  dow: UsPremarketIndex;
+}> {
+  const [nasdaqQuote, dow] = await Promise.all([
+    fetchUsMarketIndicator(usPremarketIndexConfigs[0]!).catch((error: unknown) =>
+      unavailableUsMarketIndicator(
+        usPremarketIndexConfigs[0]!,
+        error instanceof Error ? error.message : "納斯達克指數資料暫不可用",
+      ),
+    ),
+    getDowJonesIndicator(),
+  ]);
+  const { key: _key, ...nasdaq } = nasdaqQuote;
+  return { nasdaq, dow };
+}
+
 export async function getMarketOverviewQuotes(): Promise<MarketQuoteData[]> {
   const [taiwanQuotes, usQuotes] = await Promise.all([
     getMarketQuotes(),
@@ -1359,25 +2139,241 @@ export async function getMarketOverviewQuotes(): Promise<MarketQuoteData[]> {
 export async function getTaiexHistory(
   range: SupportedRange,
 ): Promise<HistoryData> {
-  const exchangeDays = await getExchangeHistory(
-    range,
-    fetchTwseTaiexMonth,
-    { volume: null, open: 1, high: 2, low: 3, close: 4 },
-  );
-  const bars: YahooBar[] = exchangeDays.map((day) => ({
-    ...day,
-    volume: null,
-  }));
-  const latest = bars.at(-1);
-  if (!latest) throw new MarketDataError("沒有可用的大盤歷史資料", 404);
+  let officialBars: YahooBar[] = [];
+  let officialError: unknown = null;
+  try {
+    const exchangeDays = await getExchangeHistory(
+      range,
+      fetchTwseTaiexMonth,
+      { volume: null, open: 1, high: 2, low: 3, close: 4 },
+    );
+    officialBars = exchangeDays.map((day) => ({ ...day, volume: null }));
+  } catch (error) {
+    officialError = error;
+  }
 
-  return {
-    ticker: "^TWII",
-    source: "TWSE Open Data",
-    range,
-    asOf: taiwanMarketCloseDate(latest.date),
-    bars,
-  };
+  const minimumBars = range === "1y" ? 120 : range === "5y" ? 500 : 2;
+  let yahooBars: YahooBar[] = [];
+  try {
+    yahooBars = await getYahooDailyBars("^TWII", "5d");
+  } catch (error) {
+    logger.warn(
+      { err: error, range },
+      "Unable to retrieve TAIEX daily history from Yahoo Finance fallback",
+    );
+  }
+  const officialLatestDate = officialBars.at(-1)?.date ?? "";
+  const yahooLatestDate = yahooBars.at(-1)?.date ?? "";
+  if (yahooLatestDate > officialLatestDate) {
+    const mergedBars = new Map(officialBars.map((bar) => [bar.date, bar]));
+    for (const bar of yahooBars) {
+      if (bar.date > officialLatestDate) mergedBars.set(bar.date, bar);
+    }
+    const latest = [...mergedBars.values()].sort((left, right) => left.date.localeCompare(right.date)).at(-1);
+    const bars = [...mergedBars.values()]
+      .sort((left, right) => left.date.localeCompare(right.date))
+      .filter((bar) => {
+        const cutoff = new Date(Date.now() - HISTORY_RANGE_CALENDAR_DAYS[range] * 86_400_000)
+          .toISOString()
+          .slice(0, 10);
+        return bar.date >= cutoff;
+      });
+    if (latest && bars.length >= minimumBars) {
+    return {
+      ticker: "^TWII",
+      source: "TWSE Open Data + Yahoo Finance · ^TWII 日線備援",
+      range,
+      asOf: taiwanMarketCloseDate(latest.date),
+      bars,
+    };
+    }
+  }
+  if (officialBars.length >= minimumBars) {
+    const latest = officialBars.at(-1)!;
+    return {
+      ticker: "^TWII",
+      source: "TWSE Open Data",
+      range,
+      asOf: taiwanMarketCloseDate(latest.date),
+      bars: officialBars,
+    };
+  }
+
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Taipei",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date());
+    const end = `${parts.find((part) => part.type === "year")?.value}-${parts.find((part) => part.type === "month")?.value}-${parts.find((part) => part.type === "day")?.value}`;
+    const start = new Date(Date.parse(`${end}T00:00:00Z`) - (
+      range === "1mo" ? 31 :
+      range === "3mo" ? 93 :
+      range === "6mo" ? 186 :
+      range === "1y" ? 366 : 1_826
+    ) * 86_400_000).toISOString().slice(0, 10);
+    const fallback = await fetchFugleTaiexHistoricalDailyBars(start, end);
+    const fugleBars: YahooBar[] = fallback.map((bar) => ({
+      ...bar,
+      timestamp: taiwanMarketCloseDate(bar.date).getTime(),
+      volume: null,
+    }));
+    const chosen = fugleBars.length > officialBars.length ? fugleBars : officialBars;
+    const latest = chosen.at(-1);
+    if (latest && chosen.length >= Math.min(minimumBars, 2)) {
+      return {
+        ticker: "^TWII",
+        source: chosen === fugleBars ? "Fugle MarketData · TWSE IX0001 歷史日線" : "TWSE Open Data",
+        range,
+        asOf: taiwanMarketCloseDate(latest.date),
+        bars: chosen,
+      };
+    }
+  } catch (error) {
+    logger.warn(
+      { err: error, officialBars: officialBars.length },
+      "Unable to retrieve TAIEX daily history from Fugle fallback",
+    );
+    officialError ??= error;
+  }
+
+  const latest = officialBars.at(-1);
+  if (latest && officialBars.length >= 2) {
+    return {
+      ticker: "^TWII",
+      source: "TWSE Open Data · 不完整",
+      range,
+      asOf: taiwanMarketCloseDate(latest.date),
+      bars: officialBars,
+    };
+  }
+  const detail = officialError instanceof Error ? `：${officialError.message}` : "";
+  throw new MarketDataError(`沒有可用的大盤歷史資料${detail}`, 502);
+}
+
+export async function getYahooDailyBars(
+  ticker: string,
+  range: YahooChartRange = "1mo",
+): Promise<YahooBar[]> {
+  const normalizedTicker = ticker.trim().toUpperCase();
+  if (!/^\^?[A-Z0-9.-]{1,16}$/.test(normalizedTicker)) {
+    throw new Error("Yahoo Finance 代碼格式無效");
+  }
+  const cacheKey = `${normalizedTicker}:${range}`;
+  const cached = yahooDailyBarCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.promise;
+  if (range !== "1y" && range !== "3y" && range !== "5y") {
+    const annual = yahooDailyBarCache.get(`${normalizedTicker}:1y`);
+    if (annual && annual.expiresAt > Date.now()) {
+      const fullBars = await annual.promise;
+      const days = range === "5d" ? 7 : HISTORY_RANGE_CALENDAR_DAYS[range];
+      const latestDate = fullBars.at(-1)?.date;
+      if (latestDate) {
+        const cutoff = new Date(Date.parse(`${latestDate}T00:00:00Z`) - days * 86_400_000)
+          .toISOString()
+          .slice(0, 10);
+        return fullBars.filter((bar) => bar.date >= cutoff);
+      }
+    }
+  }
+
+  const promise = (async () => {
+    const payload = await withYahooRequestSlot(async () => {
+      let response: Response | null = null;
+      for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
+        const url = new URL(
+          `https://${host}/v8/finance/chart/${encodeURIComponent(normalizedTicker)}`,
+        );
+        url.searchParams.set("range", range);
+        url.searchParams.set("interval", "1d");
+        response = await fetch(url, {
+          headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+          signal: AbortSignal.timeout(8_000),
+        });
+        if (response.ok) break;
+        if (response.status !== 429) {
+          throw new Error(`Yahoo Finance HTTP ${response.status}`);
+        }
+        if (host === "query2.finance.yahoo.com") {
+          yahooRateLimitedUntil = Date.now() + 60_000;
+        }
+      }
+      if (!response?.ok) throw new Error(`Yahoo Finance HTTP ${response?.status ?? "unknown"}`);
+      return await response.json() as {
+      chart?: {
+        error?: { description?: string } | null;
+        result?: Array<{
+          meta?: { symbol?: string };
+          timestamp?: number[];
+          indicators?: {
+            quote?: Array<{
+              open?: Array<number | null>;
+              high?: Array<number | null>;
+              low?: Array<number | null>;
+              close?: Array<number | null>;
+              volume?: Array<number | null>;
+            }>;
+          };
+        }> | null;
+      };
+      };
+    });
+    const result = payload.chart?.result?.[0];
+    if (!result || result.meta?.symbol?.toUpperCase() !== normalizedTicker) {
+      throw new Error(payload.chart?.error?.description ?? "Yahoo Finance 回傳代碼不符");
+    }
+    const quote = result.indicators?.quote?.[0];
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Taipei",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    const bars: YahooBar[] = [];
+    for (let index = 0; index < (result.timestamp?.length ?? 0); index += 1) {
+      const timestamp = result.timestamp![index]!;
+      const date = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Taipei",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date(timestamp * 1_000));
+      const open = quote?.open?.[index];
+      const high = quote?.high?.[index];
+      const low = quote?.low?.[index];
+      const close = quote?.close?.[index];
+      if (
+        date >= today ||
+        !Number.isFinite(open) || !Number.isFinite(high) ||
+        !Number.isFinite(low) || !Number.isFinite(close) ||
+        open! <= 0 || high! < Math.max(open!, close!) ||
+        low! > Math.min(open!, close!) || low! <= 0
+      ) continue;
+      bars.push({
+        date,
+        timestamp: taiwanMarketCloseDate(date).getTime(),
+        open: open!,
+        high: high!,
+        low: low!,
+        close: close!,
+        volume: typeof quote?.volume?.[index] === "number"
+          ? quote.volume[index]!
+          : null,
+      });
+    }
+    if (bars.length < 2) throw new Error("Yahoo Finance 日線資料不足");
+    return bars;
+  })();
+
+  const entry = { expiresAt: Date.now() + 60_000, promise };
+  yahooDailyBarCache.set(cacheKey, entry);
+  try {
+    return await promise;
+  } catch (error) {
+    entry.expiresAt = Date.now() + 20_000;
+    throw error;
+  }
 }
 
 export async function getTaiexIntradayHistory(): Promise<MarketIntradayHistoryData> {
@@ -1387,18 +2383,42 @@ export async function getTaiexIntradayHistory(): Promise<MarketIntradayHistoryDa
 
   const promise = (async (): Promise<MarketIntradayHistoryData> => {
     let intraday: Awaited<ReturnType<typeof fetchFugleTaiexIntradayCandles>>;
+    let dailyHistory: Awaited<ReturnType<typeof getTaiexHistory>> | null = null;
+    let sessionType: MarketIntradayHistoryData["sessionType"] = "live";
     try {
       intraday = await fetchFugleTaiexIntradayCandles();
     } catch (error) {
-      throw new MarketDataError(
-        error instanceof Error
-          ? error.message
-          : "目前無法取得加權指數一分鐘分時資料",
-        502,
-      );
+      if (
+        !(error instanceof Error) ||
+        error.message !== "Fugle 尚未提供加權指數一分鐘分時資料"
+      ) {
+        throw new MarketDataError(
+          error instanceof Error
+            ? error.message
+            : "目前無法取得加權指數一分鐘分時資料",
+          502,
+        );
+      }
+
+      dailyHistory = await getTaiexHistory("1mo");
+      const latestSessionDate = dailyHistory.bars.at(-1)?.date;
+      if (!latestSessionDate) {
+        throw new MarketDataError("沒有可用的官方加權指數交易日，無法回查歷史分時", 502);
+      }
+      try {
+        intraday = await fetchFugleTaiexHistoricalIntradayCandles(latestSessionDate);
+        sessionType = "historical";
+      } catch (historicalError) {
+        throw new MarketDataError(
+          historicalError instanceof Error
+            ? `即時分時尚無資料，且無法取得最近交易日歷史分時：${historicalError.message}`
+            : "即時分時尚無資料，且無法取得最近交易日歷史分時",
+          502,
+        );
+      }
     }
 
-    const dailyHistory = await getTaiexHistory("1mo");
+    dailyHistory ??= await getTaiexHistory("1mo");
     const previousClose =
       dailyHistory.bars
         .filter((bar) => bar.date < intraday.date)
@@ -1425,7 +2445,10 @@ export async function getTaiexIntradayHistory(): Promise<MarketIntradayHistoryDa
       ticker: "^TWII",
       date: intraday.date,
       timeframe: "1m",
-      source: "Fugle MarketData · TWSE IX0001 一分鐘 K 線",
+      sessionType,
+      source: sessionType === "historical"
+        ? "Fugle MarketData · TWSE IX0001 官方歷史一分鐘 K 線"
+        : "Fugle MarketData · TWSE IX0001 即時一分鐘 K 線",
       previousClose,
       asOf: latest.time,
       bars: intraday.bars,
@@ -1444,10 +2467,235 @@ export async function getTaiexIntradayHistory(): Promise<MarketIntradayHistoryDa
   }
 }
 
+async function fetchFinMindStockHistory(
+  code: string,
+  from: string,
+  to: string,
+  signal?: AbortSignal,
+): Promise<ExchangeDay[]> {
+  const token = process.env.FINMIND_API_TOKEN?.trim();
+  if (!token) throw new Error("未設定 FinMind API token");
+  const url = new URL("https://api.finmindtrade.com/api/v4/data");
+  url.searchParams.set("dataset", "TaiwanStockPrice");
+  url.searchParams.set("data_id", code);
+  url.searchParams.set("start_date", from);
+  url.searchParams.set("end_date", to);
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+      "User-Agent": USER_AGENT,
+    },
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw await finMindHttpError(response, "FinMind 歷史日線回應");
+  const payload = await response.json() as {
+    status?: number;
+    msg?: string;
+    data?: Array<Record<string, unknown>>;
+  };
+  if (payload.status !== 200 || !Array.isArray(payload.data)) {
+    throw new Error(`FinMind 歷史日線回傳格式錯誤${payload.msg ? `：${payload.msg}` : ""}`);
+  }
+  const parseNumber = (value: unknown): number | null =>
+    typeof value === "number" && Number.isFinite(value)
+      ? value
+      : typeof value === "string"
+        ? exchangeNumber(value)
+        : null;
+  const bars = payload.data.flatMap((row): ExchangeDay[] => {
+    const date = typeof row.date === "string" ? row.date : "";
+    const open = parseNumber(row.open);
+    const high = parseNumber(row.max);
+    const low = parseNumber(row.min);
+    const close = parseNumber(row.close);
+    const volume = parseNumber(row.Trading_Volume);
+    if (
+      row.stock_id !== code ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(date) || date < from || date > to ||
+      open === null || high === null || low === null || close === null ||
+      open <= 0 || high <= 0 || low <= 0 || close <= 0 ||
+      low > Math.min(open, close) || high < Math.max(open, close)
+    ) return [];
+    return [{
+      date,
+      timestamp: Date.parse(`${date}T05:30:00.000Z`),
+      open,
+      high,
+      low,
+      close,
+      volume,
+    }];
+  }).sort((left, right) => left.date.localeCompare(right.date));
+  if (!bars.length) throw new Error("FinMind 歷史日線沒有符合股票代號與日期的有效資料");
+  return bars;
+}
+
+async function fetchFinMindMarketWideRecentStockHistory(
+  asOfDate: string,
+): Promise<MarketWideRecentStockHistory> {
+  const token = process.env.FINMIND_API_TOKEN?.trim();
+  if (!token) throw new Error("全市場批次日線需要已設定的 FinMind API token");
+  const startDate = new Date(Date.parse(`${asOfDate}T00:00:00Z`) - 75 * 86_400_000)
+    .toISOString().slice(0, 10);
+  const url = new URL("https://api.finmindtrade.com/api/v4/data");
+  url.searchParams.set("dataset", "TaiwanStockPrice");
+  url.searchParams.set("start_date", startDate);
+  url.searchParams.set("end_date", asOfDate);
+  url.searchParams.set("streaming_all_data", "true");
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+      "User-Agent": USER_AGENT,
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw await finMindHttpError(response, "FinMind 全市場日線回應");
+  const payload = await response.json() as {
+    status?: number;
+    msg?: string;
+    data?: Array<Record<string, unknown>>;
+  };
+  if (payload.status !== 200 || !Array.isArray(payload.data)) {
+    throw new Error(`FinMind 全市場日線回傳格式錯誤${payload.msg ? `：${payload.msg}` : ""}`);
+  }
+  const parseNumber = (value: unknown): number | null =>
+    typeof value === "number" && Number.isFinite(value)
+      ? value
+      : typeof value === "string" ? exchangeNumber(value) : null;
+  const grouped = new Map<string, ExchangeDay[]>();
+  for (const row of payload.data) {
+    const code = typeof row.stock_id === "string" ? row.stock_id.trim().toUpperCase() : "";
+    const date = typeof row.date === "string" ? row.date : "";
+    const open = parseNumber(row.open);
+    const high = parseNumber(row.max);
+    const low = parseNumber(row.min);
+    const close = parseNumber(row.close);
+    const volume = parseNumber(row.Trading_Volume);
+    const tradedValue = parseNumber(row.Trading_money);
+    if (
+      !/^[A-Z0-9]{4,6}$/.test(code) ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(date) || date < startDate || date > asOfDate ||
+      open === null || high === null || low === null || close === null ||
+      open <= 0 || high < Math.max(open, close) || low > Math.min(open, close) || low <= 0
+    ) continue;
+    const bars = grouped.get(code) ?? [];
+    bars.push({
+      date,
+      timestamp: Date.parse(`${date}T05:30:00.000Z`),
+      open,
+      high,
+      low,
+      close,
+      volume,
+      tradedValue,
+    });
+    grouped.set(code, bars);
+  }
+  for (const bars of grouped.values()) bars.sort((left, right) => left.date.localeCompare(right.date));
+  if (grouped.size < 500) {
+    throw new Error(`FinMind 全市場日線覆蓋不足：僅有 ${grouped.size} 檔股票資料`);
+  }
+  return { source: "FinMind TaiwanStockPrice · 全市場批次日線", barsBySymbol: grouped };
+}
+
+export async function getMarketWideRecentStockHistory(
+  asOfDate: string,
+  universe: Array<Pick<OfficialDailyClose, "symbol" | "exchange">> = [],
+  onFallbackProgress?: (completed: number, total: number) => void,
+): Promise<MarketWideRecentStockHistory> {
+  try {
+    return await fetchFinMindMarketWideRecentStockHistory(asOfDate);
+  } catch (bulkError) {
+    if (!universe.length) throw bulkError;
+    logger.warn(
+      { err: bulkError, asOfDate, universeSize: universe.length },
+      "FinMind bulk history unavailable; falling back to validated per-stock history",
+    );
+    const failures: string[] = [];
+    let completed = 0;
+    const histories = await mapWithConcurrency(universe, 6, async ({ symbol, exchange }) => {
+      const ticker = `${symbol}.${exchange === "twse" ? "TW" : "TWO"}`;
+      try {
+        const fetchRecentBars = async (range: "1mo" | "3mo") => {
+          const history = await getStockHistory(ticker, range, {
+            expectedAsOf: asOfDate,
+            skipFinMindFallback: true,
+          });
+          const bars = history.bars
+            .filter((bar) => bar.date <= asOfDate)
+            .map((bar): ExchangeDay => ({
+              date: bar.date,
+              timestamp: Date.parse(`${bar.date}T05:30:00.000Z`),
+              open: bar.open,
+              high: bar.high,
+              low: bar.low,
+              close: bar.close,
+              volume: bar.volume,
+            }))
+            .sort((left, right) => left.date.localeCompare(right.date));
+          return { history, bars };
+        };
+        let recent = await fetchRecentBars("1mo");
+        if (!hasAlignedRecentHistoryBars(recent.bars, asOfDate)) {
+          recent = await fetchRecentBars("3mo");
+        }
+        if (!hasAlignedRecentHistoryBars(recent.bars, asOfDate)) {
+          failures.push(symbol);
+          return null;
+        }
+        return { symbol, source: recent.history.source, bars: recent.bars };
+      } catch {
+        failures.push(symbol);
+        return null;
+      } finally {
+        completed += 1;
+        onFallbackProgress?.(completed, universe.length);
+      }
+    });
+    const barsBySymbol = new Map<string, ExchangeDay[]>();
+    const sourceCounts = new Map<string, number>();
+    for (const result of histories) {
+      if (!result) continue;
+      barsBySymbol.set(result.symbol, result.bars);
+      sourceCounts.set(result.source, (sourceCounts.get(result.source) ?? 0) + 1);
+    }
+    logger.info(
+      {
+        asOfDate,
+        requestedSymbols: universe.length,
+        usableSymbols: barsBySymbol.size,
+        failedSymbols: failures.length,
+        failedSymbolExamples: failures.slice(0, 10),
+        sourceCounts: Object.fromEntries(sourceCounts),
+      },
+      "Per-stock recent history fallback completed",
+    );
+    if (!barsBySymbol.size) {
+      throw new MarketDataError(
+        `FinMind 全市場日線無法使用，逐股官方／Fugle 備援亦未取得 ${asOfDate} 對齊且至少 21 根日線`,
+        502,
+      );
+    }
+    return {
+      source: `逐股歷史日線備援（${barsBySymbol.size}/${universe.length} 檔符合日期與覆蓋檢查）`,
+      barsBySymbol,
+    };
+  }
+}
+
 export async function getStockHistory(
   symbol: string,
   range: SupportedRange,
+  { expectedAsOf, marketWideScan = false, skipFinMindFallback = false, signal }: {
+    expectedAsOf?: string;
+    marketWideScan?: boolean;
+    skipFinMindFallback?: boolean;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<StockHistoryData> {
+  if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
   const normalized = symbol.trim().toUpperCase();
   const tpexOnly = normalized.endsWith(".TWO");
   const twseOnly = normalized.endsWith(".TW");
@@ -1457,52 +2705,242 @@ export async function getStockHistory(
   }
 
   const stockIndices = { volume: 1, open: 3, high: 4, low: 5, close: 6 };
-  const loadTwse = () =>
+  if (marketWideScan && !expectedAsOf) {
+    throw new Error("Market-wide scan history requires an official as-of date");
+  }
+  const historyWindow = marketWideScan
+    ? getMarketWideScanHistoryWindow(expectedAsOf!)
+    : expectedAsOf
+      ? {
+          startDate: new Date(
+            Date.parse(`${expectedAsOf}T00:00:00Z`) -
+              HISTORY_RANGE_CALENDAR_DAYS[range] * 86_400_000,
+          ).toISOString().slice(0, 10),
+          endDate: expectedAsOf,
+          monthCount: exchangeMonths(range, expectedAsOf).length,
+          minimumBars: MIN_HISTORY_BARS_BY_RANGE[range],
+        }
+      : undefined;
+  const loadTwse = (selectedRange: SupportedRange = range) =>
     getExchangeHistory(
-      range,
-      (month) => fetchTwseStockMonth(stockCode, month),
+      selectedRange,
+      (month) => fetchTwseStockMonth(stockCode, month, signal),
       stockIndices,
+      selectedRange === range ? historyWindow : undefined,
     );
-  const loadTpex = () =>
+  const loadTpex = (selectedRange: SupportedRange = range) =>
     getExchangeHistory(
-      range,
-      (month) => fetchTpexStockMonth(stockCode, month),
+      selectedRange,
+      (month) => fetchTpexStockMonth(stockCode, month, signal),
       stockIndices,
+      selectedRange === range ? historyWindow : undefined,
     );
 
-  let exchangeDays: ExchangeDay[];
+  let exchangeDays: ExchangeDay[] = [];
   let isTpex = tpexOnly;
-  if (tpexOnly) {
-    exchangeDays = await loadTpex();
-  } else {
-    exchangeDays = await loadTwse();
-    if (exchangeDays.length === 0 && !twseOnly) {
+  let actualRange = range;
+  let officialError: unknown = null;
+  let historyFromFugle = false;
+  let historyFromFinMind = false;
+  const minimumHistoryBars = historyWindow?.minimumBars ?? MIN_HISTORY_BARS_BY_RANGE[range];
+  const historyNeedsSupplement = () =>
+    exchangeDays.length < minimumHistoryBars ||
+    (expectedAsOf !== undefined && exchangeDays.at(-1)?.date !== expectedAsOf);
+  try {
+    if (tpexOnly) {
       exchangeDays = await loadTpex();
-      isTpex = true;
+    } else {
+      exchangeDays = await loadTwse();
+      if (exchangeDays.length === 0 && !twseOnly) {
+        exchangeDays = await loadTpex();
+        isTpex = true;
+      }
+    }
+  } catch (error) {
+    if (signal?.aborted) throw signal.reason ?? error;
+    officialError = error;
+  }
+
+  if (range === "5y" && exchangeDays.length === 0) {
+    try {
+      if (tpexOnly) {
+        exchangeDays = await loadTpex("1y");
+      } else {
+        exchangeDays = await loadTwse("1y");
+        if (exchangeDays.length === 0 && !twseOnly) {
+          exchangeDays = await loadTpex("1y");
+          isTpex = true;
+        }
+      }
+      if (exchangeDays.length > 0) actualRange = "1y";
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason ?? error;
+      officialError = error;
+    }
+  }
+
+  if (
+    historyNeedsSupplement() &&
+    !skipFinMindFallback &&
+    process.env.FINMIND_API_TOKEN?.trim()
+  ) {
+    try {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Taipei",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).formatToParts(new Date());
+      const today = `${parts.find((part) => part.type === "year")?.value}-${parts.find((part) => part.type === "month")?.value}-${parts.find((part) => part.type === "day")?.value}`;
+      const end = historyWindow?.endDate ?? today;
+      const start = historyWindow?.startDate ??
+        new Date(Date.parse(`${today}T00:00:00Z`) - HISTORY_RANGE_CALENDAR_DAYS[range] * 86_400_000)
+          .toISOString().slice(0, 10);
+      const exchange = tpexOnly ? "TPEx" : twseOnly ? "TWSE" : exchangeDays.length
+        ? isTpex ? "TPEx" : "TWSE"
+        : null;
+      if (!exchange) throw new Error("股票市場別未核實，拒絕使用 FinMind 歷史備援");
+      const backup = await fetchFinMindStockHistory(stockCode, start, end, signal);
+      const backupMatchesExpectedDate = expectedAsOf === undefined ||
+        backup.at(-1)?.date === expectedAsOf;
+      const currentMatchesExpectedDate = expectedAsOf === undefined ||
+        exchangeDays.at(-1)?.date === expectedAsOf;
+      if (
+        backupMatchesExpectedDate &&
+        (backup.length > exchangeDays.length || !currentMatchesExpectedDate)
+      ) {
+        exchangeDays = backup;
+        isTpex = exchange === "TPEx";
+        actualRange = range;
+        historyFromFinMind = true;
+      }
+    } catch (backupError) {
+      if (signal?.aborted) throw signal.reason ?? backupError;
+      logger.warn(
+        { err: backupError, symbol: stockCode },
+        "Unable to retrieve requested history range from FinMind fallback",
+      );
+    }
+  }
+
+  // If the official source returned less than the requested history window,
+  // try that same span from Fugle rather than silently overstating coverage.
+  if (historyNeedsSupplement()) {
+    try {
+      const taiwanDateParts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Taipei",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).formatToParts(new Date());
+      const today = `${taiwanDateParts.find((part) => part.type === "year")?.value}-${taiwanDateParts.find((part) => part.type === "month")?.value}-${taiwanDateParts.find((part) => part.type === "day")?.value}`;
+      const maxDays = HISTORY_RANGE_CALENDAR_DAYS[range];
+      const endDate = historyWindow?.endDate ?? today;
+      const end = new Date(`${endDate}T00:00:00Z`);
+      const start = historyWindow?.startDate ??
+        new Date(end.getTime() - maxDays * 86_400_000).toISOString().slice(0, 10);
+      const backup = await fetchFugleStockHistoricalDailyRange(stockCode, start, endDate, signal);
+      if (
+        (twseOnly && backup.exchange !== "TWSE") ||
+        (tpexOnly && backup.exchange !== "TPEx")
+      ) throw new Error(`Fugle 回傳交易所 ${backup.exchange}，與要求的股票市場不符`);
+      const backupMatchesExpectedDate = expectedAsOf === undefined ||
+        backup.bars.at(-1)?.date === expectedAsOf;
+      const currentMatchesExpectedDate = expectedAsOf === undefined ||
+        exchangeDays.at(-1)?.date === expectedAsOf;
+      if (
+        backupMatchesExpectedDate &&
+        (backup.bars.length > exchangeDays.length || !currentMatchesExpectedDate)
+      ) {
+        exchangeDays = backup.bars;
+        isTpex = backup.exchange === "TPEx";
+        actualRange = range;
+        historyFromFugle = true;
+        historyFromFinMind = false;
+        officialError = null;
+      }
+    } catch (backupError) {
+      if (signal?.aborted) throw signal.reason ?? backupError;
+      if (exchangeDays.length === 0) {
+        const officialMessage = officialError instanceof Error
+          ? officialError.message
+          : "官方日線無可用資料";
+        const backupMessage = backupError instanceof Error
+          ? backupError.message
+          : "Fugle 歷史日線備援失敗";
+        throw new MarketDataError(
+          `${officialMessage}；替代歷史日線來源也無法使用：${backupMessage}`,
+          502,
+        );
+      }
+      logger.warn(
+        { err: backupError, symbol: stockCode, officialBars: exchangeDays.length },
+        "Unable to extend short official history to the requested range",
+      );
     }
   }
 
   if (exchangeDays.length === 0) {
-    throw new MarketDataError(
-      "此代號目前沒有可用的上市或上櫃日線資料；可能尚未掛牌、已下市／下櫃，或官方來源暫無資料。",
-      404,
-    );
+    try {
+      const taiwanDateParts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Taipei",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).formatToParts(new Date());
+      const today = `${taiwanDateParts.find((part) => part.type === "year")?.value}-${taiwanDateParts.find((part) => part.type === "month")?.value}-${taiwanDateParts.find((part) => part.type === "day")?.value}`;
+      const maxDays = range === "1y" ? 366 : range === "6mo" ? 186 : range === "3mo" ? 93 : 31;
+      const end = new Date(`${today}T00:00:00Z`);
+      const start = new Date(end.getTime() - maxDays * 86_400_000).toISOString().slice(0, 10);
+      const backup = await fetchFugleStockHistoricalDailyRange(stockCode, start, today, signal);
+      if (
+        (twseOnly && backup.exchange !== "TWSE") ||
+        (tpexOnly && backup.exchange !== "TPEx")
+      ) throw new Error(`Fugle 回傳交易所 ${backup.exchange}，與要求的股票市場不符`);
+      const latest = backup.bars.at(-1)!;
+      return {
+        symbol: stockCode,
+        ticker: `${stockCode}.${backup.exchange === "TPEx" ? "TWO" : "TW"}`,
+        source: "Fugle MarketData 歷史日Ｋ備援（交易所公開日線暫不可用）",
+        currency: "TWD",
+        range: actualRange,
+        asOf: taiwanMarketCloseDate(latest.date),
+        bars: backup.bars,
+      };
+    } catch (backupError) {
+      if (signal?.aborted) throw signal.reason ?? backupError;
+      const officialMessage = officialError instanceof Error
+        ? officialError.message
+        : "官方日線無可用資料";
+      const backupMessage = backupError instanceof Error
+        ? backupError.message
+        : "Fugle 歷史日線備援失敗";
+      throw new MarketDataError(
+        `${officialMessage}；替代歷史日線來源也無法使用：${backupMessage}`,
+        502,
+      );
+    }
   }
 
   const bars: YahooBar[] = exchangeDays.map((bar) => ({
     ...bar,
     // TPEx reports daily volume in thousand shares; expose both exchanges in
     // shares so the client can consistently divide by 1,000 to show lots.
+    // Fugle already reports shares, so never scale those fallback bars again.
     volume:
-      isTpex && bar.volume !== null ? bar.volume * 1_000 : bar.volume,
+      isTpex && !historyFromFugle && !historyFromFinMind && bar.volume !== null ? bar.volume * 1_000 : bar.volume,
   }));
   const latest = bars.at(-1)!;
   return {
     symbol: stockCode,
     ticker: `${stockCode}.${isTpex ? "TWO" : "TW"}`,
-    source: isTpex ? "TPEx Open Data" : "TWSE Open Data",
+    source: historyFromFugle
+      ? "Fugle MarketData 歷史日線備援"
+      : historyFromFinMind
+      ? `FinMind TaiwanStockPrice（${isTpex ? "TPEx" : "TWSE"} 市場別由官方行情核實）`
+      : isTpex ? "TPEx Open Data" : "TWSE Open Data",
     currency: "TWD",
-    range,
+    range: actualRange,
     asOf: taiwanMarketCloseDate(latest.date),
     bars,
   };
@@ -1527,6 +2965,9 @@ export async function getTaiexSummary(): Promise<MarketSummaryData> {
   const ma20 = movingAverage(closes, 20);
   const ma60 = movingAverage(closes, 60);
   const ma120 = movingAverage(closes, 120);
+  const recentBars = bars.slice(-20);
+  const support20 = recentBars.length ? Math.min(...recentBars.map((bar) => bar.low)) : null;
+  const resistance20 = recentBars.length ? Math.max(...recentBars.map((bar) => bar.high)) : null;
   let quote: MarketQuoteData | null = null;
   try {
     quote = await getTaiexQuote();
@@ -1622,6 +3063,8 @@ export async function getTaiexSummary(): Promise<MarketSummaryData> {
     ma20,
     ma60,
     ma120,
+    support20,
+    resistance20,
     score,
     status:
       score === null

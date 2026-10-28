@@ -9,12 +9,15 @@ import type { QuantBacktestMetrics } from './quantBacktestMetrics';
 import type { QuantCostStress } from './quantCostStress';
 import type { QuantDataCoverage } from './quantDataCoverage';
 import type { QuantEquityPoint } from './quantEquityPoint';
+import type { QuantMonteCarlo } from './quantMonteCarlo';
+import type { QuantParameterStability } from './quantParameterStability';
 import type { QuantResearchResultAiProvider } from './quantResearchResultAiProvider';
 import type { QuantResearchResultRangeMonths } from './quantResearchResultRangeMonths';
 import type { QuantResearchResultRebalance } from './quantResearchResultRebalance';
 import type { QuantStrategy } from './quantStrategy';
 import type { QuantTimingComparison } from './quantTimingComparison';
 import type { QuantTrade } from './quantTrade';
+import type { QuantWalkForward } from './quantWalkForward';
 
 export interface QuantResearchResult {
   runId: number;
@@ -31,6 +34,9 @@ export interface QuantResearchResult {
   topN: number;
   rebalance: QuantResearchResultRebalance;
   timingComparison?: QuantTimingComparison;
+  walkForward?: QuantWalkForward;
+  parameterStability?: QuantParameterStability;
+  monteCarlo?: QuantMonteCarlo;
   costStress?: QuantCostStress;
   strategy: QuantStrategy;
   metrics: QuantBacktestMetrics;

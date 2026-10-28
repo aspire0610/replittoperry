@@ -94,6 +94,44 @@ export type QuantResearchResultJson = {
       maxDrawdownPercent: number;
     };
   };
+  walkForward?: {
+    folds: Array<{
+      index: number;
+      trainStartDate: string;
+      trainEndDate: string;
+      validationStartDate: string;
+      validationEndDate: string;
+      selectedThreshold: number;
+      closedTradeCount: number;
+      winRatePercent: number | null;
+      totalReturnPercent: number;
+      maxDrawdownPercent: number;
+    }>;
+  };
+  parameterStability?: {
+    calibrationStartDate: string;
+    calibrationEndDate: string;
+    thresholdFactor: string;
+    grid: Array<{
+      threshold: number;
+      rebalance: "daily" | "weekly" | "monthly";
+      closedTradeCount: number;
+      winRatePercent: number | null;
+      totalReturnPercent: number;
+      maxDrawdownPercent: number;
+    }>;
+  };
+  monteCarlo?: {
+    method: string;
+    simulationCount: number;
+    sampledSessions: number;
+    probabilityOfLossPercent: number | null;
+    terminalReturnP05Percent: number | null;
+    terminalReturnMedianPercent: number | null;
+    terminalReturnP95Percent: number | null;
+    maxDrawdownP95Percent: number | null;
+    terminalReturnBuckets: Array<{ range: string; count: number }>;
+  };
   aiSummary?: string | null;
   coverage: {
     requestedStartDate: string;

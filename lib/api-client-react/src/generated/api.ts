@@ -25,13 +25,19 @@ import type {
   AdminUserList,
   AdminUserUpdate,
   AdminWebSearchDiagnostic,
+  AiResearchJob,
+  AiStockResearchAgent,
+  AiStockResearchAgentInput,
+  AiStockResearchAgentUpdate,
   AssistantChatReply,
   AssistantChatRequest,
   DeleteAccountStockAiConversationParams,
   ErrorResponse,
+  EtfMarket,
   FuturesAiDayStrategy,
   GetAccountStockAiConversationParams,
   GetAdminUsersParams,
+  GetMarketAiDailySummaryParams,
   GetMarketHistoryParams,
   GetStockAiAssessmentParams,
   GetStockHistoryParams,
@@ -46,7 +52,9 @@ import type {
   MarketHistory,
   MarketIntradayHistory,
   MarketOverview,
-  MarketSummary,
+  MarketSummaryResponse,
+  MarketWideAiPickScanJob,
+  MarketWideAiPickScanRequest,
   PaperTradeInput,
   PaperTradingAccountInput,
   PaperTradingPortfolio,
@@ -63,6 +71,10 @@ import type {
   StockAiBuyPriceVerdict,
   StockAiConversation,
   StockAiConversationUpdate,
+  StockAiHistoricalValidationInput,
+  StockAiHistoricalValidationProgress,
+  StockAiPicks,
+  StockAiPicksProgress,
   StockCatalog,
   StockHistory,
   StockResearchData,
@@ -342,9 +354,9 @@ export const getGetMarketSummaryUrl = () => {
  * Returns the TAIEX trend, moving averages, and transparent rule-based market factors.
  * @summary Get market trend summary
  */
-export const getMarketSummary = async ( options?: Parameters<typeof customFetch>[1]): Promise<MarketSummary> => {
+export const getMarketSummary = async ( options?: Parameters<typeof customFetch>[1]): Promise<MarketSummaryResponse> => {
 
-  return customFetch<MarketSummary>(getGetMarketSummaryUrl(),
+  return customFetch<MarketSummaryResponse>(getGetMarketSummaryUrl(),
   {
     ...options,
     method: 'GET'
@@ -408,21 +420,28 @@ export function useGetMarketSummary<TData = Awaited<ReturnType<typeof getMarketS
 
 
 
-export const getGetMarketAiDailySummaryUrl = () => {
+export const getGetMarketAiDailySummaryUrl = (params?: GetMarketAiDailySummaryParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/market/ai-daily-summary`
+  return stringifiedParams.length > 0 ? `/api/market/ai-daily-summary?${stringifiedParams}` : `/api/market/ai-daily-summary`
 }
 
 /**
  * Combines the latest TAIEX quote, official historical technical indicators, and recent web-search news leads. Quote and news timestamps are returned for context.
  * @summary Get today's AI pre-market summary
  */
-export const getMarketAiDailySummary = async ( options?: Parameters<typeof customFetch>[1]): Promise<MarketAiDailySummary> => {
+export const getMarketAiDailySummary = async (params?: GetMarketAiDailySummaryParams, options?: Parameters<typeof customFetch>[1]): Promise<MarketAiDailySummary> => {
 
-  return customFetch<MarketAiDailySummary>(getGetMarketAiDailySummaryUrl(),
+  return customFetch<MarketAiDailySummary>(getGetMarketAiDailySummaryUrl(params),
   {
     ...options,
     method: 'GET'
@@ -435,23 +454,23 @@ export const getMarketAiDailySummary = async ( options?: Parameters<typeof custo
 
 
 
-export const getGetMarketAiDailySummaryQueryKey = () => {
+export const getGetMarketAiDailySummaryQueryKey = (params?: GetMarketAiDailySummaryParams,) => {
     return [
-    `/api/market/ai-daily-summary`
+    `/api/market/ai-daily-summary`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getGetMarketAiDailySummaryQueryOptions = <TData = Awaited<ReturnType<typeof getMarketAiDailySummary>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMarketAiDailySummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetMarketAiDailySummaryQueryOptions = <TData = Awaited<ReturnType<typeof getMarketAiDailySummary>>, TError = ErrorType<ErrorResponse>>(params?: GetMarketAiDailySummaryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMarketAiDailySummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetMarketAiDailySummaryQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetMarketAiDailySummaryQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMarketAiDailySummary>>> = ({ signal }) => getMarketAiDailySummary({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMarketAiDailySummary>>> = ({ signal }) => getMarketAiDailySummary(params, { signal, ...requestOptions });
 
 
 
@@ -469,11 +488,11 @@ export type GetMarketAiDailySummaryQueryError = ErrorType<ErrorResponse>
  */
 
 export function useGetMarketAiDailySummary<TData = Awaited<ReturnType<typeof getMarketAiDailySummary>>, TError = ErrorType<ErrorResponse>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMarketAiDailySummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: GetMarketAiDailySummaryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMarketAiDailySummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getGetMarketAiDailySummaryQueryOptions(options)
+  const queryOptions = getGetMarketAiDailySummaryQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -495,8 +514,8 @@ export const getGetMarketIntradayUrl = () => {
 }
 
 /**
- * Returns verified one-minute TAIEX candles from the session open through the latest available candle.
- * @summary Get the current TAIEX session's one-minute candles
+ * Returns verified one-minute TAIEX candles from the live session when available; if live candles are empty, returns the latest official historical trading session and identifies it as historical.
+ * @summary Get the latest available TAIEX one-minute session
  */
 export const getMarketIntraday = async ( options?: Parameters<typeof customFetch>[1]): Promise<MarketIntradayHistory> => {
 
@@ -543,7 +562,7 @@ export type GetMarketIntradayQueryError = ErrorType<ErrorResponse>
 
 
 /**
- * @summary Get the current TAIEX session's one-minute candles
+ * @summary Get the latest available TAIEX one-minute session
  */
 
 export function useGetMarketIntraday<TData = Awaited<ReturnType<typeof getMarketIntraday>>, TError = ErrorType<ErrorResponse>>(
@@ -810,6 +829,403 @@ export function useGetStockCatalog<TData = Awaited<ReturnType<typeof getStockCat
 
 
 
+export const getGetEtfMarketUrl = () => {
+
+
+
+
+  return `/api/etfs/market`
+}
+
+/**
+ * @summary Get Taiwan ETFs with prices and trailing-year distributions
+ */
+export const getEtfMarket = async ( options?: Parameters<typeof customFetch>[1]): Promise<EtfMarket> => {
+
+  return customFetch<EtfMarket>(getGetEtfMarketUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetEtfMarketQueryKey = () => {
+    return [
+    `/api/etfs/market`
+    ] as const;
+    }
+
+
+export const getGetEtfMarketQueryOptions = <TData = Awaited<ReturnType<typeof getEtfMarket>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getEtfMarket>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetEtfMarketQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getEtfMarket>>> = ({ signal }) => getEtfMarket({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getEtfMarket>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetEtfMarketQueryResult = NonNullable<Awaited<ReturnType<typeof getEtfMarket>>>
+export type GetEtfMarketQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Get Taiwan ETFs with prices and trailing-year distributions
+ */
+
+export function useGetEtfMarket<TData = Awaited<ReturnType<typeof getEtfMarket>>, TError = ErrorType<ErrorResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getEtfMarket>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetEtfMarketQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetStockAiPicksProgressUrl = () => {
+
+
+
+
+  return `/api/stocks/ai-picks/progress`
+}
+
+/**
+ * @summary Get live progress for the current Taiwan market scan
+ */
+export const getStockAiPicksProgress = async ( options?: Parameters<typeof customFetch>[1]): Promise<StockAiPicksProgress> => {
+
+  return customFetch<StockAiPicksProgress>(getGetStockAiPicksProgressUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetStockAiPicksProgressQueryKey = () => {
+    return [
+    `/api/stocks/ai-picks/progress`
+    ] as const;
+    }
+
+
+export const getGetStockAiPicksProgressQueryOptions = <TData = Awaited<ReturnType<typeof getStockAiPicksProgress>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStockAiPicksProgress>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetStockAiPicksProgressQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStockAiPicksProgress>>> = ({ signal }) => getStockAiPicksProgress({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStockAiPicksProgress>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetStockAiPicksProgressQueryResult = NonNullable<Awaited<ReturnType<typeof getStockAiPicksProgress>>>
+export type GetStockAiPicksProgressQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get live progress for the current Taiwan market scan
+ */
+
+export function useGetStockAiPicksProgress<TData = Awaited<ReturnType<typeof getStockAiPicksProgress>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStockAiPicksProgress>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetStockAiPicksProgressQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getStartStockAiPicksScanJobUrl = () => {
+
+
+
+
+  return `/api/stocks/ai-picks/scan-jobs`
+}
+
+/**
+ * @summary Start or reuse the active scan, or manually rerun the daily stock filter
+ */
+export const startStockAiPicksScanJob = async (marketWideAiPickScanRequest?: MarketWideAiPickScanRequest, options?: Parameters<typeof customFetch>[1]): Promise<MarketWideAiPickScanJob> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<MarketWideAiPickScanJob>(getStartStockAiPicksScanJobUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(marketWideAiPickScanRequest)
+  }
+);}
+
+
+
+
+
+export const getStartStockAiPicksScanJobMutationKey = () => ['startStockAiPicksScanJob'] as const;
+
+export const getStartStockAiPicksScanJobMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startStockAiPicksScanJob>>, TError,StartStockAiPicksScanJobMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof startStockAiPicksScanJob>>, TError,StartStockAiPicksScanJobMutationVariables, TContext> => {
+
+const mutationKey = getStartStockAiPicksScanJobMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof startStockAiPicksScanJob>>, StartStockAiPicksScanJobMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  startStockAiPicksScanJob(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StartStockAiPicksScanJobMutationResult = NonNullable<Awaited<ReturnType<typeof startStockAiPicksScanJob>>>
+    export type StartStockAiPicksScanJobMutationBody = BodyType<MarketWideAiPickScanRequest> | undefined
+    export type StartStockAiPicksScanJobMutationError = ErrorType<unknown>
+    export type StartStockAiPicksScanJobMutationVariables = {data?: BodyType<MarketWideAiPickScanRequest>}
+
+    /**
+ * @summary Start or reuse the active scan, or manually rerun the daily stock filter
+ */
+export const useStartStockAiPicksScanJob = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startStockAiPicksScanJob>>, TError,StartStockAiPicksScanJobMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof startStockAiPicksScanJob>>,
+        TError,
+        StartStockAiPicksScanJobMutationVariables,
+        TContext
+      > => {
+      return useMutation(getStartStockAiPicksScanJobMutationOptions(options));
+    }
+
+export const getGetStockAiPicksScanJobUrl = (jobId: number,) => {
+
+
+
+
+  return `/api/stocks/ai-picks/scan-jobs/${jobId}`
+}
+
+/**
+ * @summary Get full-market AI scan progress and result
+ */
+export const getStockAiPicksScanJob = async (jobId: number, options?: Parameters<typeof customFetch>[1]): Promise<MarketWideAiPickScanJob> => {
+
+  return customFetch<MarketWideAiPickScanJob>(getGetStockAiPicksScanJobUrl(jobId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetStockAiPicksScanJobQueryKey = (jobId: number,) => {
+    return [
+    `/api/stocks/ai-picks/scan-jobs/${jobId}`
+    ] as const;
+    }
+
+
+export const getGetStockAiPicksScanJobQueryOptions = <TData = Awaited<ReturnType<typeof getStockAiPicksScanJob>>, TError = ErrorType<ErrorResponse>>(jobId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStockAiPicksScanJob>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetStockAiPicksScanJobQueryKey(jobId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStockAiPicksScanJob>>> = ({ signal }) => getStockAiPicksScanJob(jobId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: jobId !== null && jobId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStockAiPicksScanJob>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetStockAiPicksScanJobQueryResult = NonNullable<Awaited<ReturnType<typeof getStockAiPicksScanJob>>>
+export type GetStockAiPicksScanJobQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Get full-market AI scan progress and result
+ */
+
+export function useGetStockAiPicksScanJob<TData = Awaited<ReturnType<typeof getStockAiPicksScanJob>>, TError = ErrorType<ErrorResponse>>(
+ jobId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStockAiPicksScanJob>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetStockAiPicksScanJobQueryOptions(jobId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetStockAiPicksUrl = () => {
+
+
+
+
+  return `/api/stocks/ai-picks`
+}
+
+/**
+ * Screens official listed and OTC daily reports, summarizes market breadth, and returns evidence-based AI research candidates. Direction estimates are subjective, uncalibrated, and not historical strategy win rates.
+ * @summary Scan the Taiwan market for AI stock candidates
+ */
+export const getStockAiPicks = async ( options?: Parameters<typeof customFetch>[1]): Promise<StockAiPicks> => {
+
+  return customFetch<StockAiPicks>(getGetStockAiPicksUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetStockAiPicksQueryKey = () => {
+    return [
+    `/api/stocks/ai-picks`
+    ] as const;
+    }
+
+
+export const getGetStockAiPicksQueryOptions = <TData = Awaited<ReturnType<typeof getStockAiPicks>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStockAiPicks>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetStockAiPicksQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStockAiPicks>>> = ({ signal }) => getStockAiPicks({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStockAiPicks>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetStockAiPicksQueryResult = NonNullable<Awaited<ReturnType<typeof getStockAiPicks>>>
+export type GetStockAiPicksQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Scan the Taiwan market for AI stock candidates
+ */
+
+export function useGetStockAiPicks<TData = Awaited<ReturnType<typeof getStockAiPicks>>, TError = ErrorType<ErrorResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStockAiPicks>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetStockAiPicksQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getGetStockResearchDataUrl = (params: GetStockResearchDataParams,) => {
   const normalizedParams = new URLSearchParams();
 
@@ -979,6 +1395,95 @@ export function useGetStockAiAssessment<TData = Awaited<ReturnType<typeof getSto
 
 
 
+
+export const getRunStockAiHistoricalValidationBatchUrl = () => {
+
+
+
+
+  return `/api/stocks/ai-historical-validation`
+}
+
+/**
+ * Uses official historical daily bars and non-overlapping five-trading-day windows. Each AI forecast sees only data available on its forecast date; future bars are used only for settlement. Progress is persisted and can be resumed.
+ * @summary Run the next batch of isolated AI historical forecasts for one stock
+ */
+export const runStockAiHistoricalValidationBatch = async (stockAiHistoricalValidationInput: StockAiHistoricalValidationInput, options?: Parameters<typeof customFetch>[1]): Promise<StockAiHistoricalValidationProgress> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<StockAiHistoricalValidationProgress>(getRunStockAiHistoricalValidationBatchUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(stockAiHistoricalValidationInput)
+  }
+);}
+
+
+
+
+
+export const getRunStockAiHistoricalValidationBatchMutationKey = () => ['runStockAiHistoricalValidationBatch'] as const;
+
+export const getRunStockAiHistoricalValidationBatchMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runStockAiHistoricalValidationBatch>>, TError,RunStockAiHistoricalValidationBatchMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof runStockAiHistoricalValidationBatch>>, TError,RunStockAiHistoricalValidationBatchMutationVariables, TContext> => {
+
+const mutationKey = getRunStockAiHistoricalValidationBatchMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runStockAiHistoricalValidationBatch>>, RunStockAiHistoricalValidationBatchMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  runStockAiHistoricalValidationBatch(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunStockAiHistoricalValidationBatchMutationResult = NonNullable<Awaited<ReturnType<typeof runStockAiHistoricalValidationBatch>>>
+    export type RunStockAiHistoricalValidationBatchMutationBody = BodyType<StockAiHistoricalValidationInput>
+    export type RunStockAiHistoricalValidationBatchMutationError = ErrorType<ErrorResponse>
+    export type RunStockAiHistoricalValidationBatchMutationVariables = {data: BodyType<StockAiHistoricalValidationInput>}
+
+    /**
+ * @summary Run the next batch of isolated AI historical forecasts for one stock
+ */
+export const useRunStockAiHistoricalValidationBatch = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runStockAiHistoricalValidationBatch>>, TError,RunStockAiHistoricalValidationBatchMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof runStockAiHistoricalValidationBatch>>,
+        TError,
+        RunStockAiHistoricalValidationBatchMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRunStockAiHistoricalValidationBatchMutationOptions(options));
+    }
 
 export const getEvaluateStockAiBuyPriceUrl = () => {
 
@@ -1323,6 +1828,486 @@ export function useGetAccountMe<TData = Awaited<ReturnType<typeof getAccountMe>>
 
 
 
+
+export const getGetAccountResearchJobsUrl = () => {
+
+
+
+
+  return `/api/account/research-jobs`
+}
+
+/**
+ * Returns the signed-in account's saved CEO research tasks, including tasks submitted through its linked LINE account.
+ * @summary List CEO research jobs
+ */
+export const getAccountResearchJobs = async ( options?: Parameters<typeof customFetch>[1]): Promise<AiResearchJob[]> => {
+
+  return customFetch<AiResearchJob[]>(getGetAccountResearchJobsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAccountResearchJobsQueryKey = () => {
+    return [
+    `/api/account/research-jobs`
+    ] as const;
+    }
+
+
+export const getGetAccountResearchJobsQueryOptions = <TData = Awaited<ReturnType<typeof getAccountResearchJobs>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountResearchJobs>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAccountResearchJobsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAccountResearchJobs>>> = ({ signal }) => getAccountResearchJobs({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAccountResearchJobs>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAccountResearchJobsQueryResult = NonNullable<Awaited<ReturnType<typeof getAccountResearchJobs>>>
+export type GetAccountResearchJobsQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary List CEO research jobs
+ */
+
+export function useGetAccountResearchJobs<TData = Awaited<ReturnType<typeof getAccountResearchJobs>>, TError = ErrorType<ErrorResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountResearchJobs>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAccountResearchJobsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAccountStockResearchAgentsUrl = () => {
+
+
+
+
+  return `/api/account/stock-research-agents`
+}
+
+/**
+ * @summary List signed-in user's individual-stock research agents
+ */
+export const getAccountStockResearchAgents = async ( options?: Parameters<typeof customFetch>[1]): Promise<AiStockResearchAgent[]> => {
+
+  return customFetch<AiStockResearchAgent[]>(getGetAccountStockResearchAgentsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAccountStockResearchAgentsQueryKey = () => {
+    return [
+    `/api/account/stock-research-agents`
+    ] as const;
+    }
+
+
+export const getGetAccountStockResearchAgentsQueryOptions = <TData = Awaited<ReturnType<typeof getAccountStockResearchAgents>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountStockResearchAgents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAccountStockResearchAgentsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAccountStockResearchAgents>>> = ({ signal }) => getAccountStockResearchAgents({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAccountStockResearchAgents>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAccountStockResearchAgentsQueryResult = NonNullable<Awaited<ReturnType<typeof getAccountStockResearchAgents>>>
+export type GetAccountStockResearchAgentsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List signed-in user's individual-stock research agents
+ */
+
+export function useGetAccountStockResearchAgents<TData = Awaited<ReturnType<typeof getAccountStockResearchAgents>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountStockResearchAgents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAccountStockResearchAgentsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateAccountStockResearchAgentUrl = () => {
+
+
+
+
+  return `/api/account/stock-research-agents`
+}
+
+/**
+ * @summary Create a daily stock research agent
+ */
+export const createAccountStockResearchAgent = async (aiStockResearchAgentInput: AiStockResearchAgentInput, options?: Parameters<typeof customFetch>[1]): Promise<AiStockResearchAgent> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AiStockResearchAgent>(getCreateAccountStockResearchAgentUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(aiStockResearchAgentInput)
+  }
+);}
+
+
+
+
+
+export const getCreateAccountStockResearchAgentMutationKey = () => ['createAccountStockResearchAgent'] as const;
+
+export const getCreateAccountStockResearchAgentMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAccountStockResearchAgent>>, TError,CreateAccountStockResearchAgentMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAccountStockResearchAgent>>, TError,CreateAccountStockResearchAgentMutationVariables, TContext> => {
+
+const mutationKey = getCreateAccountStockResearchAgentMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAccountStockResearchAgent>>, CreateAccountStockResearchAgentMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  createAccountStockResearchAgent(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAccountStockResearchAgentMutationResult = NonNullable<Awaited<ReturnType<typeof createAccountStockResearchAgent>>>
+    export type CreateAccountStockResearchAgentMutationBody = BodyType<AiStockResearchAgentInput>
+    export type CreateAccountStockResearchAgentMutationError = ErrorType<ErrorResponse>
+    export type CreateAccountStockResearchAgentMutationVariables = {data: BodyType<AiStockResearchAgentInput>}
+
+    /**
+ * @summary Create a daily stock research agent
+ */
+export const useCreateAccountStockResearchAgent = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAccountStockResearchAgent>>, TError,CreateAccountStockResearchAgentMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAccountStockResearchAgent>>,
+        TError,
+        CreateAccountStockResearchAgentMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreateAccountStockResearchAgentMutationOptions(options));
+    }
+
+export const getUpdateAccountStockResearchAgentUrl = (agentId: string,) => {
+
+
+
+
+  return `/api/account/stock-research-agents/${agentId}`
+}
+
+/**
+ * @summary Pause or resume a stock research agent
+ */
+export const updateAccountStockResearchAgent = async (agentId: string,
+    aiStockResearchAgentUpdate: AiStockResearchAgentUpdate, options?: Parameters<typeof customFetch>[1]): Promise<AiStockResearchAgent> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AiStockResearchAgent>(getUpdateAccountStockResearchAgentUrl(agentId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(aiStockResearchAgentUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateAccountStockResearchAgentMutationKey = () => ['updateAccountStockResearchAgent'] as const;
+
+export const getUpdateAccountStockResearchAgentMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAccountStockResearchAgent>>, TError,UpdateAccountStockResearchAgentMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAccountStockResearchAgent>>, TError,UpdateAccountStockResearchAgentMutationVariables, TContext> => {
+
+const mutationKey = getUpdateAccountStockResearchAgentMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAccountStockResearchAgent>>, UpdateAccountStockResearchAgentMutationVariables> = (props) => {
+          const {agentId,data} = props ?? {};
+
+          return  updateAccountStockResearchAgent(agentId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAccountStockResearchAgentMutationResult = NonNullable<Awaited<ReturnType<typeof updateAccountStockResearchAgent>>>
+    export type UpdateAccountStockResearchAgentMutationBody = BodyType<AiStockResearchAgentUpdate>
+    export type UpdateAccountStockResearchAgentMutationError = ErrorType<ErrorResponse>
+    export type UpdateAccountStockResearchAgentMutationVariables = {agentId: string;data: BodyType<AiStockResearchAgentUpdate>}
+
+    /**
+ * @summary Pause or resume a stock research agent
+ */
+export const useUpdateAccountStockResearchAgent = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAccountStockResearchAgent>>, TError,UpdateAccountStockResearchAgentMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateAccountStockResearchAgent>>,
+        TError,
+        UpdateAccountStockResearchAgentMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateAccountStockResearchAgentMutationOptions(options));
+    }
+
+export const getDeleteAccountStockResearchAgentUrl = (agentId: string,) => {
+
+
+
+
+  return `/api/account/stock-research-agents/${agentId}`
+}
+
+/**
+ * @summary Delete a stock research agent
+ */
+export const deleteAccountStockResearchAgent = async (agentId: string, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeleteAccountStockResearchAgentUrl(agentId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteAccountStockResearchAgentMutationKey = () => ['deleteAccountStockResearchAgent'] as const;
+
+export const getDeleteAccountStockResearchAgentMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAccountStockResearchAgent>>, TError,DeleteAccountStockResearchAgentMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAccountStockResearchAgent>>, TError,DeleteAccountStockResearchAgentMutationVariables, TContext> => {
+
+const mutationKey = getDeleteAccountStockResearchAgentMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAccountStockResearchAgent>>, DeleteAccountStockResearchAgentMutationVariables> = (props) => {
+          const {agentId} = props ?? {};
+
+          return  deleteAccountStockResearchAgent(agentId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAccountStockResearchAgentMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAccountStockResearchAgent>>>
+
+    export type DeleteAccountStockResearchAgentMutationError = ErrorType<ErrorResponse>
+    export type DeleteAccountStockResearchAgentMutationVariables = {agentId: string}
+
+    /**
+ * @summary Delete a stock research agent
+ */
+export const useDeleteAccountStockResearchAgent = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAccountStockResearchAgent>>, TError,DeleteAccountStockResearchAgentMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAccountStockResearchAgent>>,
+        TError,
+        DeleteAccountStockResearchAgentMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDeleteAccountStockResearchAgentMutationOptions(options));
+    }
+
+export const getRunAccountStockResearchAgentUrl = (agentId: string,) => {
+
+
+
+
+  return `/api/account/stock-research-agents/${agentId}/run`
+}
+
+/**
+ * @summary Queue an immediate stock research agent run
+ */
+export const runAccountStockResearchAgent = async (agentId: string, options?: Parameters<typeof customFetch>[1]): Promise<AiStockResearchAgent> => {
+
+  return customFetch<AiStockResearchAgent>(getRunAccountStockResearchAgentUrl(agentId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRunAccountStockResearchAgentMutationKey = () => ['runAccountStockResearchAgent'] as const;
+
+export const getRunAccountStockResearchAgentMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runAccountStockResearchAgent>>, TError,RunAccountStockResearchAgentMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof runAccountStockResearchAgent>>, TError,RunAccountStockResearchAgentMutationVariables, TContext> => {
+
+const mutationKey = getRunAccountStockResearchAgentMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runAccountStockResearchAgent>>, RunAccountStockResearchAgentMutationVariables> = (props) => {
+          const {agentId} = props ?? {};
+
+          return  runAccountStockResearchAgent(agentId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunAccountStockResearchAgentMutationResult = NonNullable<Awaited<ReturnType<typeof runAccountStockResearchAgent>>>
+
+    export type RunAccountStockResearchAgentMutationError = ErrorType<ErrorResponse>
+    export type RunAccountStockResearchAgentMutationVariables = {agentId: string}
+
+    /**
+ * @summary Queue an immediate stock research agent run
+ */
+export const useRunAccountStockResearchAgent = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runAccountStockResearchAgent>>, TError,RunAccountStockResearchAgentMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof runAccountStockResearchAgent>>,
+        TError,
+        RunAccountStockResearchAgentMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRunAccountStockResearchAgentMutationOptions(options));
+    }
 
 export const getGetAccountLineNotificationsUrl = () => {
 

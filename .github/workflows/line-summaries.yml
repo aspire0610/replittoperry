@@ -1,14 +1,31 @@
 name: LINE scheduled summaries
 
 on:
+  workflow_dispatch:
+    inputs:
+      summary:
+        description: Which summary to send manually
+        type: choice
+        options:
+          - premarket
+          - closing
+          - quant-intraday
+          - quant-closing
+        default: premarket
+        required: true
   schedule:
-    - cron: "30 0 * * 1-5"
+    - cron: "30-55/5 0 * * 1-5"
     - cron: "0 7 * * 1-5"
+    - cron: "10 7 * * 1-5"
+    - cron: "30 7 * * 1-5"
+    - cron: "0 8 * * 1-5"
+    - cron: "30-55/5 2 * * 1-5"
+    - cron: "0-30/10 9 * * 1-5"
 
 permissions: {}
 
 concurrency:
-  group: line-summaries-${{ github.event.schedule }}
+  group: line-summaries-${{ (github.event.schedule == '30-55/5 0 * * 1-5' || inputs.summary == 'premarket') && 'premarket' || (github.event.schedule == '30-55/5 2 * * 1-5' || inputs.summary == 'quant-intraday') && 'quant-intraday' || (github.event.schedule == '0-30/10 9 * * 1-5' || inputs.summary == 'quant-closing') && 'quant-closing' || 'closing' }}
   cancel-in-progress: false
 
 jobs:
@@ -18,7 +35,8 @@ jobs:
     env:
       CRON_SECRET: ${{ secrets.CRON_SECRET }}
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-      SCHEDULE: ${{ github.event.schedule }}
+      SCHEDULE: ${{ github.event.schedule || (inputs.summary == 'premarket' && '30-55/5 0 * * 1-5' || inputs.summary == 'quant-intraday' && '30-55/5 2 * * 1-5' || inputs.summary == 'quant-closing' && '0-30/10 9 * * 1-5' || '0 7 * * 1-5') }}
+      IS_SCHEDULED: ${{ github.event_name == 'schedule' }}
     steps:
       - name: Call the matching protected Vercel route
         shell: bash
@@ -31,17 +49,28 @@ jobs:
           fi
 
           case "$SCHEDULE" in
-            "30 0 * * 1-5")
+            "30-55/5 0 * * 1-5")
               path="/api/market/line-premarket-summary"
               ;;
-            "0 7 * * 1-5")
+            "0 7 * * 1-5"|"10 7 * * 1-5"|"30 7 * * 1-5"|"0 8 * * 1-5")
               path="/api/market/line-closing-summary"
+              ;;
+            "30-55/5 2 * * 1-5")
+              path="/api/market/line-quant-signals?session=intraday"
+              ;;
+            "0-30/10 9 * * 1-5")
+              path="/api/market/line-quant-signals?session=closing"
               ;;
             *)
               echo "::error::Unexpected schedule; refusing to call any route."
               exit 1
               ;;
           esac
+          echo "Calling $path for schedule $SCHEDULE."
+
+          if [[ "$IS_SCHEDULED" == "true" ]]; then
+            echo "::notice::Calling the route even if this scheduled run starts late; route-level duplicate checks remain active."
+          fi
 
           umask 077
           headers_file="$RUNNER_TEMP/line-summary-headers"
@@ -59,6 +88,19 @@ jobs:
             "https://tw-stock-dashboard-smoky.vercel.app${path}")"
 
           if [[ ! "$status" =~ ^2[0-9][0-9]$ ]]; then
+            python - "$response_file" <<'PY'
+          import json
+          import sys
+
+          try:
+              with open(sys.argv[1], encoding="utf-8") as f:
+                  data = json.load(f)
+              fields = ("date", "reason", "error", "stage", "diagnostic", "sent", "skipped", "failed")
+              safe = {key: data[key] for key in fields if key in data}
+              print("Vercel route response: " + json.dumps(safe, ensure_ascii=False)[:800])
+          except (OSError, json.JSONDecodeError):
+              print("Vercel route returned a non-JSON error response.")
+          PY
             echo "::error::Vercel summary route returned HTTP $status."
             exit 1
           fi
@@ -69,6 +111,15 @@ jobs:
 
           with open(sys.argv[1], encoding="utf-8") as f:
               data = json.load(f)
-          fields = ("date", "sent", "skipped", "failed", "reason")
+          fields = (
+              "date",
+              "sent",
+              "skipped",
+              "skippedDisabled",
+              "skippedUnlinked",
+              "skippedAlreadySent",
+              "failed",
+              "reason",
+          )
           print(json.dumps({key: data[key] for key in fields if key in data}, ensure_ascii=False))
           PY

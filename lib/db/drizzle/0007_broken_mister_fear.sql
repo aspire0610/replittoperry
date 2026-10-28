@@ -1,0 +1,1 @@
+ALTER TABLE "stock_ai_historical_validation_samples" ADD COLUMN "forecast_probability_percent" numeric(5, 2);

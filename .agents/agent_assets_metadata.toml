@@ -1,0 +1,46 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "_Rauk2zY2B3ohgNPndRdo"
+uri = "file://.local/conversation-workspace/files/refactored_stock_dashboard.py"
+type = "unspecified"
+title = "重構後股市量化儀表板程式碼"
+description = "完整 Python／Streamlit 原始碼，保留原架構並升級液態玻璃淺色 UI 與量化訊號邏輯。"
+logical_id = "ba613ce1-b3b9-43fa-8de9-8909da54b5ed"
+content_hash = "sha256:f2b9c925f7b52029a3995ea59ef2eec114fe6482e445272e011f9357af275dd4"
+size = 67152
+mtime_ms = 1790671750069
+storage_uri = "gcs://replit-rams-assets-pike/rams/assets/conversation:79627ccc-d5f7-4ed5-8532-014bb7134e3f/ba613ce1-b3b9-43fa-8de9-8909da54b5ed/ae0c97aa-e243-440f-a56c-ac2b07281580"
+storage_version_token = "1790671833662002"
+content_type = "application/octet-stream"
+source_uri = "file://refactored_stock_dashboard.py"
+
+[[outputs]]
+id = "xX4Qcrqg3IEafaMb7Hjhp"
+uri = "file://.local/conversation-workspace/files/refactored_stock_dashboard_v2.py"
+type = "unspecified"
+title = "Streamlit 股市儀表板－玻璃淺色修正版"
+description = "修正深色模組卡片與低對比文字，統一玻璃淺色卡片、清晰文字與訊號色。"
+logical_id = "8d448480-61f7-424a-9cf6-024e422bcaba"
+content_hash = "sha256:8636b5191a41921f2b3adde16726f850b5958883e55393cb7c212bdc2616a47a"
+size = 75176
+mtime_ms = 1790690913765
+storage_uri = "gcs://replit-rams-assets-pike/rams/assets/conversation:79627ccc-d5f7-4ed5-8532-014bb7134e3f/8d448480-61f7-424a-9cf6-024e422bcaba/4fda09f6-a9b4-4dbd-a00d-bdaf3a632933"
+storage_version_token = "1790690931530927"
+content_type = "application/octet-stream"
+source_uri = "file://refactored_stock_dashboard_v2.py"
+
+[[outputs]]
+id = "gs3a7YWO2jxUud4yE41Ld"
+uri = "file://generated-artifacts/finlab-tw-momentum.html"
+type = "html"
+title = "台股 6–1 月動能策略回測報告（部分市場）"
+description = "FinLab 2010-07-30 至 2026-10-16 回測；明確標示 1,360/2,236 檔資料覆蓋、876 檔排除與存活者偏差。"
+logical_id = "e43db400-7ef6-46c4-86ff-c82c00c0bb1a"
+content_hash = "sha256:72442849f05e70dca209e1f5fc0439d6374d66af70e8acac4e67c1a2ad0527ed"
+size = 3078143
+mtime_ms = 1792371811666
+storage_uri = "gcs://replit-rams-assets-pike/rams/assets/repl:0f6b19ce-ae9d-469c-a953-c81ecdf19e0f/e43db400-7ef6-46c4-86ff-c82c00c0bb1a/3d88971d-4d4a-474b-a0e1-5ccde28bab15"
+storage_version_token = "1792371840791717"
+content_type = "text/html"

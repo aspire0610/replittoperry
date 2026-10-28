@@ -175,7 +175,13 @@ async function collectDeploymentFiles() {
       fail(`Refusing to upload a path outside the repository: ${filePath}`);
     }
 
-    const stats = await fs.lstat(absolutePath);
+    let stats;
+    try {
+      stats = await fs.lstat(absolutePath);
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw error;
+    }
     if (stats.isSymbolicLink()) {
       fail(`Refusing to upload a symbolic link: ${filePath}`);
     }

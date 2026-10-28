@@ -16,9 +16,12 @@ import type { StockAiAssessmentHistoricalStrategyBacktest } from './stockAiAsses
 import type { StockAiAssessmentMarketInfluence } from './stockAiAssessmentMarketInfluence';
 import type { StockAiAssessmentPricePlanStatus } from './stockAiAssessmentPricePlanStatus';
 import type { StockAiAssessmentReferenceType } from './stockAiAssessmentReferenceType';
+import type { StockAiAssessmentScorecard } from './stockAiAssessmentScorecard';
 import type { StockAiAssessmentSmcAnalysis } from './stockAiAssessmentSmcAnalysis';
+import type { StockAiAssessmentTradeScenarios } from './stockAiAssessmentTradeScenarios';
 import type { StockAiAssessmentWebResearch } from './stockAiAssessmentWebResearch';
 import type { StockAiDirectionValidation } from './stockAiDirectionValidation';
+import type { StockAiPricePlanValidation } from './stockAiPricePlanValidation';
 
 export interface StockAiAssessment {
   symbol: string;
@@ -83,8 +86,13 @@ export interface StockAiAssessment {
      * @maxItems 5
      */
   forecastPath: StockAiAssessmentForecastPathItem[];
+  scorecard: StockAiAssessmentScorecard;
+  tradeScenarios: StockAiAssessmentTradeScenarios;
+  /** @maxLength 5000 */
+  reportMarkdown: string;
   /** A fixed, reproducible strategy backtest kept separate from AI confidence and recommendations. */
   historicalStrategyBacktest: StockAiAssessmentHistoricalStrategyBacktest;
   forwardDirectionValidation: StockAiDirectionValidation;
+  pricePlanValidation: StockAiPricePlanValidation;
   disclaimer: string;
 }

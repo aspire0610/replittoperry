@@ -1,0 +1,1 @@
+-- Reserved custom migration; stock research agent schema is captured by the next diff.

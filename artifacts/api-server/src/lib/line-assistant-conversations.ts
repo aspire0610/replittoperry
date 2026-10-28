@@ -65,7 +65,57 @@ export async function saveLineAssistantTurn(
   });
 }
 
+export async function appendLineAssistantTurn(
+  lineUserId: string,
+  assistantMessage: string,
+): Promise<void> {
+  const { db, table, eq } = await loadDatabase();
+  await db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({ messages: table.messages })
+      .from(table)
+      .where(eq(table.lineUserId, lineUserId))
+      .for("update")
+      .limit(1);
+    if (!row) return;
+    const messages: LineAssistantMessage[] = [
+      ...row.messages,
+      { role: "assistant" as const, content: assistantMessage },
+    ].slice(-12);
+    await tx
+      .update(table)
+      .set({ messages, updatedAt: new Date() })
+      .where(eq(table.lineUserId, lineUserId));
+  });
+}
+
 export async function clearLineAssistantHistory(lineUserId: string): Promise<void> {
   const { db, table, eq } = await loadDatabase();
   await db.delete(table).where(eq(table.lineUserId, lineUserId));
+}
+
+export async function setLineAssistantOwner(
+  lineUserId: string,
+  ownerUserId: string,
+): Promise<void> {
+  const { db, table } = await loadDatabase();
+  await db
+    .insert(table)
+    .values({ lineUserId, ownerUserId, messages: [] })
+    .onConflictDoUpdate({
+      target: table.lineUserId,
+      set: { ownerUserId, updatedAt: new Date() },
+    });
+}
+
+export async function getLineAssistantOwner(
+  lineUserId: string,
+): Promise<string | null> {
+  const { db, table, eq } = await loadDatabase();
+  const [row] = await db
+    .select({ ownerUserId: table.ownerUserId })
+    .from(table)
+    .where(eq(table.lineUserId, lineUserId))
+    .limit(1);
+  return row?.ownerUserId ?? null;
 }

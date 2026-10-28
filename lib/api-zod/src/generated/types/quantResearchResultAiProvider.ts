@@ -16,4 +16,5 @@ export const QuantResearchResultAiProvider = {
   groq: 'groq',
   ollama: 'ollama',
   openrouter: 'openrouter',
+  nvidia_nim: 'nvidia_nim',
 } as const;

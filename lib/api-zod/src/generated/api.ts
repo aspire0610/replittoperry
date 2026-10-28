@@ -61,7 +61,7 @@ export const GetFuturesAiDayStrategyResponse = zod.object({
   "entryCondition": zod.string().max(getFuturesAiDayStrategyResponseEntryConditionMax),
   "invalidationCondition": zod.string().max(getFuturesAiDayStrategyResponseInvalidationConditionMax),
   "riskNote": zod.string().max(getFuturesAiDayStrategyResponseRiskNoteMax),
-  "aiProvider": zod.union([zod.literal('openai'),zod.literal('1min_ai'),zod.literal('agnes_ai'),zod.literal('groq'),zod.literal('ollama'),zod.literal('openrouter'),zod.literal('gemini'),zod.literal(null)]).nullable(),
+  "aiProvider": zod.union([zod.literal('openai'),zod.literal('1min_ai'),zod.literal('agnes_ai'),zod.literal('groq'),zod.literal('ollama'),zod.literal('openrouter'),zod.literal('gemini'),zod.literal('nvidia_nim'),zod.literal(null)]).nullable(),
   "dataCoverage": zod.enum(['quote_only', 'unavailable']),
   "dayQuote": zod.object({
   "key": zod.enum(['taiex', 'futures_day', 'futures_night', 'us_tsm_adr', 'us_sox']),
@@ -108,6 +108,18 @@ export const GetFuturesAiDayStrategyResponse = zod.object({
  * Returns the TAIEX trend, moving averages, and transparent rule-based market factors.
  * @summary Get market trend summary
  */
+export const getMarketSummaryResponseTwoChecklistConclusionTextMax = 300;
+
+export const getMarketSummaryResponseTwoChecklistItemsItemDetailMax = 500;
+
+export const getMarketSummaryResponseTwoChecklistItemsItemSourcesItemTitleMax = 300;
+
+export const getMarketSummaryResponseTwoChecklistScenariosItemConditionMax = 300;
+
+export const getMarketSummaryResponseTwoChecklistScenariosItemImplicationMax = 300;
+
+
+
 export const GetMarketSummaryResponse = zod.object({
   "ticker": zod.string(),
   "source": zod.string(),
@@ -132,13 +144,43 @@ export const GetMarketSummaryResponse = zod.object({
   "observedValue": zod.number().nullable(),
   "threshold": zod.number().nullable()
 }))
+}).and(zod.object({
+  "checklist": zod.object({
+  "marketDate": zod.coerce.date(),
+  "analyzedAt": zod.coerce.date(),
+  "conclusion": zod.enum(['bullish', 'mixed', 'bearish', 'insufficient']),
+  "conclusionText": zod.string().max(getMarketSummaryResponseTwoChecklistConclusionTextMax),
+  "items": zod.array(zod.object({
+  "key": zod.string(),
+  "label": zod.string(),
+  "signal": zod.enum(['bullish', 'mixed', 'bearish', 'unavailable']),
+  "detail": zod.string().max(getMarketSummaryResponseTwoChecklistItemsItemDetailMax),
+  "source": zod.string().nullable(),
+  "observedAt": zod.string().nullable(),
+  "sources": zod.array(zod.object({
+  "title": zod.string().max(getMarketSummaryResponseTwoChecklistItemsItemSourcesItemTitleMax),
+  "url": zod.string().url()
+})).optional()
+})),
+  "scenarios": zod.array(zod.object({
+  "label": zod.string(),
+  "condition": zod.string().max(getMarketSummaryResponseTwoChecklistScenariosItemConditionMax),
+  "implication": zod.string().max(getMarketSummaryResponseTwoChecklistScenariosItemImplicationMax)
+}))
 })
+}))
 
 
 /**
  * Combines the latest TAIEX quote, official historical technical indicators, and recent web-search news leads. Quote and news timestamps are returned for context.
  * @summary Get today's AI pre-market summary
  */
+export const getMarketAiDailySummaryQueryModeDefault = `premarket`;
+
+export const GetMarketAiDailySummaryQueryParams = zod.object({
+  "mode": zod.enum(['premarket', 'closing']).default(getMarketAiDailySummaryQueryModeDefault)
+})
+
 export const getMarketAiDailySummaryResponseNewsSourcesItemTitleMax = 180;
 
 export const getMarketAiDailySummaryResponseNewsSourcesItemSnippetMax = 500;
@@ -161,15 +203,15 @@ export const GetMarketAiDailySummaryResponse = zod.object({
   "snippet": zod.string().max(getMarketAiDailySummaryResponseNewsSourcesItemSnippetMax)
 })),
   "summary": zod.string().max(getMarketAiDailySummaryResponseSummaryMax).nullable(),
-  "aiProvider": zod.union([zod.literal('openai'),zod.literal('1min_ai'),zod.literal('agnes_ai'),zod.literal('groq'),zod.literal('ollama'),zod.literal('openrouter'),zod.literal('gemini'),zod.literal(null)]).nullable(),
+  "aiProvider": zod.union([zod.literal('openai'),zod.literal('1min_ai'),zod.literal('agnes_ai'),zod.literal('groq'),zod.literal('ollama'),zod.literal('openrouter'),zod.literal('gemini'),zod.literal('nvidia_nim'),zod.literal(null)]).nullable(),
   "analyzedAt": zod.coerce.date().nullable(),
   "error": zod.string().max(getMarketAiDailySummaryResponseErrorMax).nullable()
 })
 
 
 /**
- * Returns verified one-minute TAIEX candles from the session open through the latest available candle.
- * @summary Get the current TAIEX session's one-minute candles
+ * Returns verified one-minute TAIEX candles from the live session when available; if live candles are empty, returns the latest official historical trading session and identifies it as historical.
+ * @summary Get the latest available TAIEX one-minute session
  */
 export const getMarketIntradayResponseDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 
@@ -178,6 +220,7 @@ export const GetMarketIntradayResponse = zod.object({
   "ticker": zod.string(),
   "date": zod.string().regex(getMarketIntradayResponseDateRegExp),
   "timeframe": zod.enum(['1m']),
+  "sessionType": zod.enum(['live', 'historical']),
   "source": zod.string(),
   "previousClose": zod.number(),
   "asOf": zod.coerce.date(),
@@ -273,6 +316,847 @@ export const GetStockCatalogResponse = zod.object({
   "exchange": zod.enum(['twse', 'tpex']),
   "exchangeName": zod.enum(['上市', '上櫃'])
 }))
+})
+
+
+/**
+ * @summary Get Taiwan ETFs with prices and trailing-year distributions
+ */
+export const getEtfMarketResponseInstrumentsItemPriceMin = 0;
+
+export const getEtfMarketResponseInstrumentsItemMarketPriceMin = 0;
+
+export const getEtfMarketResponseInstrumentsItemNetAssetValueMin = 0;
+
+export const getEtfMarketResponseInstrumentsItemDistributionsItemCashAmountPerUnitMin = 0;
+
+export const getEtfMarketResponseInstrumentsItemTrailing12MonthDividendMin = 0;
+
+export const getEtfMarketResponseInstrumentsItemTrailing12MonthYieldPercentMin = 0;
+
+export const getEtfMarketResponseInstrumentsItemLatestDistributionMin = 0;
+
+
+
+export const GetEtfMarketResponse = zod.object({
+  "asOf": zod.string(),
+  "source": zod.string(),
+  "navDataStatus": zod.enum(['available', 'partial', 'unavailable']),
+  "navDataUpdatedAt": zod.coerce.date().nullable(),
+  "instruments": zod.array(zod.object({
+  "symbol": zod.string(),
+  "ticker": zod.string(),
+  "name": zod.string(),
+  "exchangeName": zod.enum(['上市', '上櫃']),
+  "price": zod.number().min(getEtfMarketResponseInstrumentsItemPriceMin).nullable(),
+  "marketPrice": zod.number().min(getEtfMarketResponseInstrumentsItemMarketPriceMin).nullable(),
+  "netAssetValue": zod.number().min(getEtfMarketResponseInstrumentsItemNetAssetValueMin).nullable(),
+  "discountPremiumAmount": zod.number().nullable(),
+  "discountPremiumPercent": zod.number().nullable(),
+  "navUpdatedAt": zod.coerce.date().nullable(),
+  "distributions": zod.array(zod.object({
+  "exDividendDate": zod.string(),
+  "paymentDate": zod.string(),
+  "cashAmountPerUnit": zod.number().min(getEtfMarketResponseInstrumentsItemDistributionsItemCashAmountPerUnitMin)
+})),
+  "trailing12MonthDividend": zod.number().min(getEtfMarketResponseInstrumentsItemTrailing12MonthDividendMin),
+  "trailing12MonthYieldPercent": zod.number().min(getEtfMarketResponseInstrumentsItemTrailing12MonthYieldPercentMin).nullable(),
+  "latestDistribution": zod.number().min(getEtfMarketResponseInstrumentsItemLatestDistributionMin).nullable(),
+  "frequency": zod.string()
+}))
+})
+
+
+/**
+ * @summary Get live progress for the current Taiwan market scan
+ */
+export const getStockAiPicksProgressResponsePercentMin = 0;
+export const getStockAiPicksProgressResponsePercentMax = 100;
+
+export const getStockAiPicksProgressResponseCompletedBatchesMin = 0;
+
+export const getStockAiPicksProgressResponseFailedBatchesMin = 0;
+
+export const getStockAiPicksProgressResponseTotalBatchesMin = 0;
+
+export const getStockAiPicksProgressResponseScannedCountMin = 0;
+
+export const getStockAiPicksProgressResponseCandidateCountMin = 0;
+
+export const getStockAiPicksProgressResponseCompletedCandidatesMin = 0;
+
+
+
+export const GetStockAiPicksProgressResponse = zod.object({
+  "stage": zod.enum(['idle', 'market_data', 'preliminary', 'final_selection', 'candidate_analysis', 'complete', 'error']),
+  "percent": zod.number().int().min(getStockAiPicksProgressResponsePercentMin).max(getStockAiPicksProgressResponsePercentMax),
+  "completedBatches": zod.number().int().min(getStockAiPicksProgressResponseCompletedBatchesMin),
+  "failedBatches": zod.number().int().min(getStockAiPicksProgressResponseFailedBatchesMin),
+  "totalBatches": zod.number().int().min(getStockAiPicksProgressResponseTotalBatchesMin),
+  "scannedCount": zod.number().int().min(getStockAiPicksProgressResponseScannedCountMin),
+  "candidateCount": zod.number().int().min(getStockAiPicksProgressResponseCandidateCountMin),
+  "completedCandidates": zod.number().int().min(getStockAiPicksProgressResponseCompletedCandidatesMin)
+})
+
+
+/**
+ * @summary Start or reuse the active scan, or manually rerun the daily stock filter
+ */
+export const StartStockAiPicksScanJobBody = zod.object({
+  "force": zod.boolean().optional().describe('Start a fresh scan even if a completed result exists for today.')
+})
+
+
+export const startStockAiPicksScanJobResponsePercentMin = 0;
+export const startStockAiPicksScanJobResponsePercentMax = 100;
+
+export const startStockAiPicksScanJobResponseCompletedBatchesMin = 0;
+
+export const startStockAiPicksScanJobResponseFailedBatchesMin = 0;
+
+export const startStockAiPicksScanJobResponseTotalBatchesMin = 0;
+
+export const startStockAiPicksScanJobResponseScannedCountMin = 0;
+
+export const startStockAiPicksScanJobResponseCandidateCountMin = 0;
+
+export const startStockAiPicksScanJobResponseCompletedCandidatesMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOneScannedCountMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOneCandidateCountMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOneAdvancesMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOneDeclinesMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOneUnchangedMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOneForwardValidationSampleCountMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOneForwardValidationCorrectCountMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOneForwardValidationHitRatePercentMin = 0;
+export const startStockAiPicksScanJobResponseResultOneForwardValidationHitRatePercentMax = 100;
+
+export const startStockAiPicksScanJobResponseResultOneForwardValidationLowerBoundPercentMin = 0;
+export const startStockAiPicksScanJobResponseResultOneForwardValidationLowerBoundPercentMax = 100;
+
+export const startStockAiPicksScanJobResponseResultOneForwardValidationUpperBoundPercentMin = 0;
+export const startStockAiPicksScanJobResponseResultOneForwardValidationUpperBoundPercentMax = 100;
+
+export const startStockAiPicksScanJobResponseResultOneForwardValidationBrierScoreMin = 0;
+export const startStockAiPicksScanJobResponseResultOneForwardValidationBrierScoreMax = 1;
+
+
+export const startStockAiPicksScanJobResponseResultOneWatchlistItemReferencePriceExclusiveMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOneWatchlistMax = 5;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemCloseExclusiveMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemTradedValueMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemReferencePriceExclusiveMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemDirectionProbabilityPercentMin = 0;
+export const startStockAiPicksScanJobResponseResultOnePicksItemDirectionProbabilityPercentMax = 95;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemAiDirectionProbabilityPercentMin = 0;
+export const startStockAiPicksScanJobResponseResultOnePicksItemAiDirectionProbabilityPercentMax = 95;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemRuleHitRatePercentMin = 0;
+export const startStockAiPicksScanJobResponseResultOnePicksItemRuleHitRatePercentMax = 100;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemRuleCorrectCountMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemRuleSampleCountMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemRuleLowerBoundPercentMin = 0;
+export const startStockAiPicksScanJobResponseResultOnePicksItemRuleLowerBoundPercentMax = 100;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemRuleUpperBoundPercentMin = 0;
+export const startStockAiPicksScanJobResponseResultOnePicksItemRuleUpperBoundPercentMax = 100;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemHistoricalAiDirectionHitRatePercentMin = 0;
+export const startStockAiPicksScanJobResponseResultOnePicksItemHistoricalAiDirectionHitRatePercentMax = 100;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemHistoricalDirectionLowerBoundPercentMin = 0;
+export const startStockAiPicksScanJobResponseResultOnePicksItemHistoricalDirectionLowerBoundPercentMax = 100;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemHistoricalDirectionSampleCountMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemHistoricalAiPricePlanHitRatePercentMin = 0;
+export const startStockAiPicksScanJobResponseResultOnePicksItemHistoricalAiPricePlanHitRatePercentMax = 100;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemHistoricalPricePlanLowerBoundPercentMin = 0;
+export const startStockAiPicksScanJobResponseResultOnePicksItemHistoricalPricePlanLowerBoundPercentMax = 100;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemHistoricalPricePlanSampleCountMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneCdpExclusiveMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneAhExclusiveMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneNhExclusiveMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneNlExclusiveMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneAlExclusiveMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemOperationPlanEntryPriceMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemOperationPlanTargetPriceMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemOperationPlanStopPriceMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOnePicksItemOperationPlanRewardToRiskMin = 0;
+
+export const startStockAiPicksScanJobResponseResultOnePicksMax = 30;
+
+
+
+export const StartStockAiPicksScanJobResponse = zod.object({
+  "id": zod.number().int().min(1),
+  "status": zod.enum(['queued', 'running', 'completed', 'failed']),
+  "stage": zod.enum(['idle', 'market_data', 'preliminary', 'final_selection', 'candidate_analysis', 'complete', 'error']),
+  "percent": zod.number().int().min(startStockAiPicksScanJobResponsePercentMin).max(startStockAiPicksScanJobResponsePercentMax),
+  "completedBatches": zod.number().int().min(startStockAiPicksScanJobResponseCompletedBatchesMin),
+  "failedBatches": zod.number().int().min(startStockAiPicksScanJobResponseFailedBatchesMin),
+  "totalBatches": zod.number().int().min(startStockAiPicksScanJobResponseTotalBatchesMin),
+  "scannedCount": zod.number().int().min(startStockAiPicksScanJobResponseScannedCountMin),
+  "candidateCount": zod.number().int().min(startStockAiPicksScanJobResponseCandidateCountMin),
+  "completedCandidates": zod.number().int().min(startStockAiPicksScanJobResponseCompletedCandidatesMin),
+  "result": zod.union([zod.object({
+  "marketDate": zod.coerce.date(),
+  "analyzedAt": zod.coerce.date(),
+  "source": zod.string(),
+  "marketSummary": zod.union([zod.object({
+  "ticker": zod.string(),
+  "source": zod.string(),
+  "asOf": zod.coerce.date(),
+  "currentPrice": zod.number(),
+  "change": zod.number(),
+  "changePercent": zod.number(),
+  "dailyCloseDate": zod.coerce.date(),
+  "dailyCloseSource": zod.string(),
+  "dailyClosePrice": zod.number(),
+  "dailyCloseChange": zod.number(),
+  "dailyCloseChangePercent": zod.number(),
+  "ma20": zod.number().nullable(),
+  "ma60": zod.number().nullable(),
+  "ma120": zod.number().nullable(),
+  "score": zod.number().int().nullable(),
+  "status": zod.enum(['bullish', 'neutral', 'bearish', 'insufficient']),
+  "factors": zod.array(zod.object({
+  "key": zod.string(),
+  "label": zod.string(),
+  "passed": zod.boolean().nullable(),
+  "observedValue": zod.number().nullable(),
+  "threshold": zod.number().nullable()
+}))
+}),zod.null()]),
+  "marketIndexQuote": zod.object({
+  "key": zod.enum(['taiex', 'futures_day', 'futures_night', 'us_tsm_adr', 'us_sox']),
+  "name": zod.string(),
+  "ticker": zod.string(),
+  "price": zod.number().nullable(),
+  "change": zod.number().nullable(),
+  "changePercent": zod.number().nullable(),
+  "source": zod.string().nullable(),
+  "asOf": zod.coerce.date().nullable(),
+  "available": zod.boolean(),
+  "error": zod.string().nullable()
+}),
+  "scannedCount": zod.number().int().min(startStockAiPicksScanJobResponseResultOneScannedCountMin),
+  "candidateCount": zod.number().int().min(startStockAiPicksScanJobResponseResultOneCandidateCountMin),
+  "marketContextStatus": zod.enum(['complete', 'partial']),
+  "marketContextNote": zod.string(),
+  "advances": zod.number().int().min(startStockAiPicksScanJobResponseResultOneAdvancesMin),
+  "declines": zod.number().int().min(startStockAiPicksScanJobResponseResultOneDeclinesMin),
+  "unchanged": zod.number().int().min(startStockAiPicksScanJobResponseResultOneUnchangedMin),
+  "marketView": zod.string(),
+  "probabilityDefinition": zod.string(),
+  "riskNote": zod.string(),
+  "forwardValidation": zod.object({
+  "status": zod.enum(['collecting', 'available', 'unavailable']),
+  "horizonDays": zod.literal(5),
+  "sampleCount": zod.number().int().min(startStockAiPicksScanJobResponseResultOneForwardValidationSampleCountMin),
+  "correctCount": zod.number().int().min(startStockAiPicksScanJobResponseResultOneForwardValidationCorrectCountMin),
+  "hitRatePercent": zod.number().min(startStockAiPicksScanJobResponseResultOneForwardValidationHitRatePercentMin).max(startStockAiPicksScanJobResponseResultOneForwardValidationHitRatePercentMax).nullable(),
+  "lowerBoundPercent": zod.number().min(startStockAiPicksScanJobResponseResultOneForwardValidationLowerBoundPercentMin).max(startStockAiPicksScanJobResponseResultOneForwardValidationLowerBoundPercentMax).nullable(),
+  "upperBoundPercent": zod.number().min(startStockAiPicksScanJobResponseResultOneForwardValidationUpperBoundPercentMin).max(startStockAiPicksScanJobResponseResultOneForwardValidationUpperBoundPercentMax).nullable(),
+  "brierScore": zod.number().min(startStockAiPicksScanJobResponseResultOneForwardValidationBrierScoreMin).max(startStockAiPicksScanJobResponseResultOneForwardValidationBrierScoreMax).nullable(),
+  "minimumSampleCount": zod.number().int().min(1),
+  "updatedAt": zod.coerce.date().nullable(),
+  "methodNote": zod.string()
+}),
+  "aiSelectionAttempted": zod.boolean().optional().describe('Whether a final AI selection batch was actually executed.'),
+  "aiProvider": zod.enum(['openai', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'gemini', 'nvidia_nim']),
+  "watchlist": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "referencePrice": zod.number().gt(startStockAiPicksScanJobResponseResultOneWatchlistItemReferencePriceExclusiveMin),
+  "failedStage": zod.enum(['historical_data', 'smc_signal', 'reward_to_risk', 'backtest']),
+  "failureReason": zod.string(),
+  "observation": zod.string().optional().describe('Specific verified conditions to monitor next; this is not an entry instruction.')
+})).max(startStockAiPicksScanJobResponseResultOneWatchlistMax).optional().describe('Separate non-qualified observation candidates; these are not AI picks or trade recommendations.'),
+  "picks": zod.array(zod.object({
+  "symbol": zod.string(),
+  "ticker": zod.string(),
+  "name": zod.string(),
+  "close": zod.number().gt(startStockAiPicksScanJobResponseResultOnePicksItemCloseExclusiveMin),
+  "change": zod.number().nullable(),
+  "changePercent": zod.number().nullable(),
+  "tradedValue": zod.number().min(startStockAiPicksScanJobResponseResultOnePicksItemTradedValueMin),
+  "referencePrice": zod.number().gt(startStockAiPicksScanJobResponseResultOnePicksItemReferencePriceExclusiveMin),
+  "referenceChange": zod.number().nullable(),
+  "referenceChangePercent": zod.number().nullable(),
+  "referenceType": zod.enum(['verified_trade', 'official_daily_close']),
+  "referenceAsOf": zod.coerce.date().nullable(),
+  "referenceSource": zod.string(),
+  "directionProbabilityPercent": zod.number().int().min(startStockAiPicksScanJobResponseResultOnePicksItemDirectionProbabilityPercentMin).max(startStockAiPicksScanJobResponseResultOnePicksItemDirectionProbabilityPercentMax),
+  "aiDirectionProbabilityPercent": zod.number().int().min(startStockAiPicksScanJobResponseResultOnePicksItemAiDirectionProbabilityPercentMin).max(startStockAiPicksScanJobResponseResultOnePicksItemAiDirectionProbabilityPercentMax),
+  "ruleHitRatePercent": zod.number().min(startStockAiPicksScanJobResponseResultOnePicksItemRuleHitRatePercentMin).max(startStockAiPicksScanJobResponseResultOnePicksItemRuleHitRatePercentMax).nullable(),
+  "ruleCorrectCount": zod.number().int().min(startStockAiPicksScanJobResponseResultOnePicksItemRuleCorrectCountMin),
+  "ruleSampleCount": zod.number().int().min(startStockAiPicksScanJobResponseResultOnePicksItemRuleSampleCountMin),
+  "ruleLowerBoundPercent": zod.number().min(startStockAiPicksScanJobResponseResultOnePicksItemRuleLowerBoundPercentMin).max(startStockAiPicksScanJobResponseResultOnePicksItemRuleLowerBoundPercentMax).nullable(),
+  "ruleUpperBoundPercent": zod.number().min(startStockAiPicksScanJobResponseResultOnePicksItemRuleUpperBoundPercentMin).max(startStockAiPicksScanJobResponseResultOnePicksItemRuleUpperBoundPercentMax).nullable(),
+  "historicalValidationQualified": zod.boolean(),
+  "historicalAiDirectionHitRatePercent": zod.number().min(startStockAiPicksScanJobResponseResultOnePicksItemHistoricalAiDirectionHitRatePercentMin).max(startStockAiPicksScanJobResponseResultOnePicksItemHistoricalAiDirectionHitRatePercentMax).nullable(),
+  "historicalDirectionLowerBoundPercent": zod.number().min(startStockAiPicksScanJobResponseResultOnePicksItemHistoricalDirectionLowerBoundPercentMin).max(startStockAiPicksScanJobResponseResultOnePicksItemHistoricalDirectionLowerBoundPercentMax).nullable(),
+  "historicalDirectionSampleCount": zod.number().int().min(startStockAiPicksScanJobResponseResultOnePicksItemHistoricalDirectionSampleCountMin),
+  "historicalAiPricePlanHitRatePercent": zod.number().min(startStockAiPicksScanJobResponseResultOnePicksItemHistoricalAiPricePlanHitRatePercentMin).max(startStockAiPicksScanJobResponseResultOnePicksItemHistoricalAiPricePlanHitRatePercentMax).nullable(),
+  "historicalPricePlanLowerBoundPercent": zod.number().min(startStockAiPicksScanJobResponseResultOnePicksItemHistoricalPricePlanLowerBoundPercentMin).max(startStockAiPicksScanJobResponseResultOnePicksItemHistoricalPricePlanLowerBoundPercentMax).nullable(),
+  "historicalPricePlanSampleCount": zod.number().int().min(startStockAiPicksScanJobResponseResultOnePicksItemHistoricalPricePlanSampleCountMin),
+  "cdpLevels": zod.union([zod.object({
+  "referenceDate": zod.coerce.date(),
+  "cdp": zod.number().gt(startStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneCdpExclusiveMin),
+  "ah": zod.number().gt(startStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneAhExclusiveMin),
+  "nh": zod.number().gt(startStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneNhExclusiveMin),
+  "nl": zod.number().gt(startStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneNlExclusiveMin),
+  "al": zod.number().gt(startStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneAlExclusiveMin),
+  "currentZone": zod.enum(['above_ah', 'ah_to_nh', 'nh_to_cdp', 'cdp_to_nl', 'nl_to_al', 'below_al']),
+  "openingZone": zod.union([zod.literal('above_ah'),zod.literal('ah_to_nh'),zod.literal('nh_to_cdp'),zod.literal('cdp_to_nl'),zod.literal('nl_to_al'),zod.literal('below_al'),zod.literal(null)]).nullable()
+}),zod.null()]).optional(),
+  "operationPlan": zod.object({
+  "action": zod.enum(['wait_for_pullback', 'conditional_entry', 'no_trade']),
+  "entryPrice": zod.number().min(startStockAiPicksScanJobResponseResultOnePicksItemOperationPlanEntryPriceMin).nullable(),
+  "targetPrice": zod.number().min(startStockAiPicksScanJobResponseResultOnePicksItemOperationPlanTargetPriceMin).nullable(),
+  "stopPrice": zod.number().min(startStockAiPicksScanJobResponseResultOnePicksItemOperationPlanStopPriceMin).nullable(),
+  "rewardToRisk": zod.number().min(startStockAiPicksScanJobResponseResultOnePicksItemOperationPlanRewardToRiskMin).nullable()
+}),
+  "reason": zod.string(),
+  "probabilityEvidence": zod.string(),
+  "screeningReportMarkdown": zod.string()
+})).max(startStockAiPicksScanJobResponseResultOnePicksMax),
+  "dailyPendingChanges": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "action": zod.enum(['continued', 'removed', 'added']),
+  "detail": zod.string()
+})).optional()
+}),zod.null()]),
+  "errorMessage": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Get full-market AI scan progress and result
+ */
+
+
+
+export const GetStockAiPicksScanJobParams = zod.object({
+  "jobId": zod.coerce.number().int().min(1)
+})
+
+
+export const getStockAiPicksScanJobResponsePercentMin = 0;
+export const getStockAiPicksScanJobResponsePercentMax = 100;
+
+export const getStockAiPicksScanJobResponseCompletedBatchesMin = 0;
+
+export const getStockAiPicksScanJobResponseFailedBatchesMin = 0;
+
+export const getStockAiPicksScanJobResponseTotalBatchesMin = 0;
+
+export const getStockAiPicksScanJobResponseScannedCountMin = 0;
+
+export const getStockAiPicksScanJobResponseCandidateCountMin = 0;
+
+export const getStockAiPicksScanJobResponseCompletedCandidatesMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOneScannedCountMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOneCandidateCountMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOneAdvancesMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOneDeclinesMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOneUnchangedMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOneForwardValidationSampleCountMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOneForwardValidationCorrectCountMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOneForwardValidationHitRatePercentMin = 0;
+export const getStockAiPicksScanJobResponseResultOneForwardValidationHitRatePercentMax = 100;
+
+export const getStockAiPicksScanJobResponseResultOneForwardValidationLowerBoundPercentMin = 0;
+export const getStockAiPicksScanJobResponseResultOneForwardValidationLowerBoundPercentMax = 100;
+
+export const getStockAiPicksScanJobResponseResultOneForwardValidationUpperBoundPercentMin = 0;
+export const getStockAiPicksScanJobResponseResultOneForwardValidationUpperBoundPercentMax = 100;
+
+export const getStockAiPicksScanJobResponseResultOneForwardValidationBrierScoreMin = 0;
+export const getStockAiPicksScanJobResponseResultOneForwardValidationBrierScoreMax = 1;
+
+
+export const getStockAiPicksScanJobResponseResultOneWatchlistItemReferencePriceExclusiveMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOneWatchlistMax = 5;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemCloseExclusiveMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemTradedValueMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemReferencePriceExclusiveMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemDirectionProbabilityPercentMin = 0;
+export const getStockAiPicksScanJobResponseResultOnePicksItemDirectionProbabilityPercentMax = 95;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemAiDirectionProbabilityPercentMin = 0;
+export const getStockAiPicksScanJobResponseResultOnePicksItemAiDirectionProbabilityPercentMax = 95;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemRuleHitRatePercentMin = 0;
+export const getStockAiPicksScanJobResponseResultOnePicksItemRuleHitRatePercentMax = 100;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemRuleCorrectCountMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemRuleSampleCountMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemRuleLowerBoundPercentMin = 0;
+export const getStockAiPicksScanJobResponseResultOnePicksItemRuleLowerBoundPercentMax = 100;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemRuleUpperBoundPercentMin = 0;
+export const getStockAiPicksScanJobResponseResultOnePicksItemRuleUpperBoundPercentMax = 100;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemHistoricalAiDirectionHitRatePercentMin = 0;
+export const getStockAiPicksScanJobResponseResultOnePicksItemHistoricalAiDirectionHitRatePercentMax = 100;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemHistoricalDirectionLowerBoundPercentMin = 0;
+export const getStockAiPicksScanJobResponseResultOnePicksItemHistoricalDirectionLowerBoundPercentMax = 100;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemHistoricalDirectionSampleCountMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemHistoricalAiPricePlanHitRatePercentMin = 0;
+export const getStockAiPicksScanJobResponseResultOnePicksItemHistoricalAiPricePlanHitRatePercentMax = 100;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemHistoricalPricePlanLowerBoundPercentMin = 0;
+export const getStockAiPicksScanJobResponseResultOnePicksItemHistoricalPricePlanLowerBoundPercentMax = 100;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemHistoricalPricePlanSampleCountMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneCdpExclusiveMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneAhExclusiveMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneNhExclusiveMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneNlExclusiveMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneAlExclusiveMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemOperationPlanEntryPriceMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemOperationPlanTargetPriceMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemOperationPlanStopPriceMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOnePicksItemOperationPlanRewardToRiskMin = 0;
+
+export const getStockAiPicksScanJobResponseResultOnePicksMax = 30;
+
+
+
+export const GetStockAiPicksScanJobResponse = zod.object({
+  "id": zod.number().int().min(1),
+  "status": zod.enum(['queued', 'running', 'completed', 'failed']),
+  "stage": zod.enum(['idle', 'market_data', 'preliminary', 'final_selection', 'candidate_analysis', 'complete', 'error']),
+  "percent": zod.number().int().min(getStockAiPicksScanJobResponsePercentMin).max(getStockAiPicksScanJobResponsePercentMax),
+  "completedBatches": zod.number().int().min(getStockAiPicksScanJobResponseCompletedBatchesMin),
+  "failedBatches": zod.number().int().min(getStockAiPicksScanJobResponseFailedBatchesMin),
+  "totalBatches": zod.number().int().min(getStockAiPicksScanJobResponseTotalBatchesMin),
+  "scannedCount": zod.number().int().min(getStockAiPicksScanJobResponseScannedCountMin),
+  "candidateCount": zod.number().int().min(getStockAiPicksScanJobResponseCandidateCountMin),
+  "completedCandidates": zod.number().int().min(getStockAiPicksScanJobResponseCompletedCandidatesMin),
+  "result": zod.union([zod.object({
+  "marketDate": zod.coerce.date(),
+  "analyzedAt": zod.coerce.date(),
+  "source": zod.string(),
+  "marketSummary": zod.union([zod.object({
+  "ticker": zod.string(),
+  "source": zod.string(),
+  "asOf": zod.coerce.date(),
+  "currentPrice": zod.number(),
+  "change": zod.number(),
+  "changePercent": zod.number(),
+  "dailyCloseDate": zod.coerce.date(),
+  "dailyCloseSource": zod.string(),
+  "dailyClosePrice": zod.number(),
+  "dailyCloseChange": zod.number(),
+  "dailyCloseChangePercent": zod.number(),
+  "ma20": zod.number().nullable(),
+  "ma60": zod.number().nullable(),
+  "ma120": zod.number().nullable(),
+  "score": zod.number().int().nullable(),
+  "status": zod.enum(['bullish', 'neutral', 'bearish', 'insufficient']),
+  "factors": zod.array(zod.object({
+  "key": zod.string(),
+  "label": zod.string(),
+  "passed": zod.boolean().nullable(),
+  "observedValue": zod.number().nullable(),
+  "threshold": zod.number().nullable()
+}))
+}),zod.null()]),
+  "marketIndexQuote": zod.object({
+  "key": zod.enum(['taiex', 'futures_day', 'futures_night', 'us_tsm_adr', 'us_sox']),
+  "name": zod.string(),
+  "ticker": zod.string(),
+  "price": zod.number().nullable(),
+  "change": zod.number().nullable(),
+  "changePercent": zod.number().nullable(),
+  "source": zod.string().nullable(),
+  "asOf": zod.coerce.date().nullable(),
+  "available": zod.boolean(),
+  "error": zod.string().nullable()
+}),
+  "scannedCount": zod.number().int().min(getStockAiPicksScanJobResponseResultOneScannedCountMin),
+  "candidateCount": zod.number().int().min(getStockAiPicksScanJobResponseResultOneCandidateCountMin),
+  "marketContextStatus": zod.enum(['complete', 'partial']),
+  "marketContextNote": zod.string(),
+  "advances": zod.number().int().min(getStockAiPicksScanJobResponseResultOneAdvancesMin),
+  "declines": zod.number().int().min(getStockAiPicksScanJobResponseResultOneDeclinesMin),
+  "unchanged": zod.number().int().min(getStockAiPicksScanJobResponseResultOneUnchangedMin),
+  "marketView": zod.string(),
+  "probabilityDefinition": zod.string(),
+  "riskNote": zod.string(),
+  "forwardValidation": zod.object({
+  "status": zod.enum(['collecting', 'available', 'unavailable']),
+  "horizonDays": zod.literal(5),
+  "sampleCount": zod.number().int().min(getStockAiPicksScanJobResponseResultOneForwardValidationSampleCountMin),
+  "correctCount": zod.number().int().min(getStockAiPicksScanJobResponseResultOneForwardValidationCorrectCountMin),
+  "hitRatePercent": zod.number().min(getStockAiPicksScanJobResponseResultOneForwardValidationHitRatePercentMin).max(getStockAiPicksScanJobResponseResultOneForwardValidationHitRatePercentMax).nullable(),
+  "lowerBoundPercent": zod.number().min(getStockAiPicksScanJobResponseResultOneForwardValidationLowerBoundPercentMin).max(getStockAiPicksScanJobResponseResultOneForwardValidationLowerBoundPercentMax).nullable(),
+  "upperBoundPercent": zod.number().min(getStockAiPicksScanJobResponseResultOneForwardValidationUpperBoundPercentMin).max(getStockAiPicksScanJobResponseResultOneForwardValidationUpperBoundPercentMax).nullable(),
+  "brierScore": zod.number().min(getStockAiPicksScanJobResponseResultOneForwardValidationBrierScoreMin).max(getStockAiPicksScanJobResponseResultOneForwardValidationBrierScoreMax).nullable(),
+  "minimumSampleCount": zod.number().int().min(1),
+  "updatedAt": zod.coerce.date().nullable(),
+  "methodNote": zod.string()
+}),
+  "aiSelectionAttempted": zod.boolean().optional().describe('Whether a final AI selection batch was actually executed.'),
+  "aiProvider": zod.enum(['openai', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'gemini', 'nvidia_nim']),
+  "watchlist": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "referencePrice": zod.number().gt(getStockAiPicksScanJobResponseResultOneWatchlistItemReferencePriceExclusiveMin),
+  "failedStage": zod.enum(['historical_data', 'smc_signal', 'reward_to_risk', 'backtest']),
+  "failureReason": zod.string(),
+  "observation": zod.string().optional().describe('Specific verified conditions to monitor next; this is not an entry instruction.')
+})).max(getStockAiPicksScanJobResponseResultOneWatchlistMax).optional().describe('Separate non-qualified observation candidates; these are not AI picks or trade recommendations.'),
+  "picks": zod.array(zod.object({
+  "symbol": zod.string(),
+  "ticker": zod.string(),
+  "name": zod.string(),
+  "close": zod.number().gt(getStockAiPicksScanJobResponseResultOnePicksItemCloseExclusiveMin),
+  "change": zod.number().nullable(),
+  "changePercent": zod.number().nullable(),
+  "tradedValue": zod.number().min(getStockAiPicksScanJobResponseResultOnePicksItemTradedValueMin),
+  "referencePrice": zod.number().gt(getStockAiPicksScanJobResponseResultOnePicksItemReferencePriceExclusiveMin),
+  "referenceChange": zod.number().nullable(),
+  "referenceChangePercent": zod.number().nullable(),
+  "referenceType": zod.enum(['verified_trade', 'official_daily_close']),
+  "referenceAsOf": zod.coerce.date().nullable(),
+  "referenceSource": zod.string(),
+  "directionProbabilityPercent": zod.number().int().min(getStockAiPicksScanJobResponseResultOnePicksItemDirectionProbabilityPercentMin).max(getStockAiPicksScanJobResponseResultOnePicksItemDirectionProbabilityPercentMax),
+  "aiDirectionProbabilityPercent": zod.number().int().min(getStockAiPicksScanJobResponseResultOnePicksItemAiDirectionProbabilityPercentMin).max(getStockAiPicksScanJobResponseResultOnePicksItemAiDirectionProbabilityPercentMax),
+  "ruleHitRatePercent": zod.number().min(getStockAiPicksScanJobResponseResultOnePicksItemRuleHitRatePercentMin).max(getStockAiPicksScanJobResponseResultOnePicksItemRuleHitRatePercentMax).nullable(),
+  "ruleCorrectCount": zod.number().int().min(getStockAiPicksScanJobResponseResultOnePicksItemRuleCorrectCountMin),
+  "ruleSampleCount": zod.number().int().min(getStockAiPicksScanJobResponseResultOnePicksItemRuleSampleCountMin),
+  "ruleLowerBoundPercent": zod.number().min(getStockAiPicksScanJobResponseResultOnePicksItemRuleLowerBoundPercentMin).max(getStockAiPicksScanJobResponseResultOnePicksItemRuleLowerBoundPercentMax).nullable(),
+  "ruleUpperBoundPercent": zod.number().min(getStockAiPicksScanJobResponseResultOnePicksItemRuleUpperBoundPercentMin).max(getStockAiPicksScanJobResponseResultOnePicksItemRuleUpperBoundPercentMax).nullable(),
+  "historicalValidationQualified": zod.boolean(),
+  "historicalAiDirectionHitRatePercent": zod.number().min(getStockAiPicksScanJobResponseResultOnePicksItemHistoricalAiDirectionHitRatePercentMin).max(getStockAiPicksScanJobResponseResultOnePicksItemHistoricalAiDirectionHitRatePercentMax).nullable(),
+  "historicalDirectionLowerBoundPercent": zod.number().min(getStockAiPicksScanJobResponseResultOnePicksItemHistoricalDirectionLowerBoundPercentMin).max(getStockAiPicksScanJobResponseResultOnePicksItemHistoricalDirectionLowerBoundPercentMax).nullable(),
+  "historicalDirectionSampleCount": zod.number().int().min(getStockAiPicksScanJobResponseResultOnePicksItemHistoricalDirectionSampleCountMin),
+  "historicalAiPricePlanHitRatePercent": zod.number().min(getStockAiPicksScanJobResponseResultOnePicksItemHistoricalAiPricePlanHitRatePercentMin).max(getStockAiPicksScanJobResponseResultOnePicksItemHistoricalAiPricePlanHitRatePercentMax).nullable(),
+  "historicalPricePlanLowerBoundPercent": zod.number().min(getStockAiPicksScanJobResponseResultOnePicksItemHistoricalPricePlanLowerBoundPercentMin).max(getStockAiPicksScanJobResponseResultOnePicksItemHistoricalPricePlanLowerBoundPercentMax).nullable(),
+  "historicalPricePlanSampleCount": zod.number().int().min(getStockAiPicksScanJobResponseResultOnePicksItemHistoricalPricePlanSampleCountMin),
+  "cdpLevels": zod.union([zod.object({
+  "referenceDate": zod.coerce.date(),
+  "cdp": zod.number().gt(getStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneCdpExclusiveMin),
+  "ah": zod.number().gt(getStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneAhExclusiveMin),
+  "nh": zod.number().gt(getStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneNhExclusiveMin),
+  "nl": zod.number().gt(getStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneNlExclusiveMin),
+  "al": zod.number().gt(getStockAiPicksScanJobResponseResultOnePicksItemCdpLevelsOneAlExclusiveMin),
+  "currentZone": zod.enum(['above_ah', 'ah_to_nh', 'nh_to_cdp', 'cdp_to_nl', 'nl_to_al', 'below_al']),
+  "openingZone": zod.union([zod.literal('above_ah'),zod.literal('ah_to_nh'),zod.literal('nh_to_cdp'),zod.literal('cdp_to_nl'),zod.literal('nl_to_al'),zod.literal('below_al'),zod.literal(null)]).nullable()
+}),zod.null()]).optional(),
+  "operationPlan": zod.object({
+  "action": zod.enum(['wait_for_pullback', 'conditional_entry', 'no_trade']),
+  "entryPrice": zod.number().min(getStockAiPicksScanJobResponseResultOnePicksItemOperationPlanEntryPriceMin).nullable(),
+  "targetPrice": zod.number().min(getStockAiPicksScanJobResponseResultOnePicksItemOperationPlanTargetPriceMin).nullable(),
+  "stopPrice": zod.number().min(getStockAiPicksScanJobResponseResultOnePicksItemOperationPlanStopPriceMin).nullable(),
+  "rewardToRisk": zod.number().min(getStockAiPicksScanJobResponseResultOnePicksItemOperationPlanRewardToRiskMin).nullable()
+}),
+  "reason": zod.string(),
+  "probabilityEvidence": zod.string(),
+  "screeningReportMarkdown": zod.string()
+})).max(getStockAiPicksScanJobResponseResultOnePicksMax),
+  "dailyPendingChanges": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "action": zod.enum(['continued', 'removed', 'added']),
+  "detail": zod.string()
+})).optional()
+}),zod.null()]),
+  "errorMessage": zod.string().nullable(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * Screens official listed and OTC daily reports, summarizes market breadth, and returns evidence-based AI research candidates. Direction estimates are subjective, uncalibrated, and not historical strategy win rates.
+ * @summary Scan the Taiwan market for AI stock candidates
+ */
+export const getStockAiPicksResponseScannedCountMin = 0;
+
+export const getStockAiPicksResponseCandidateCountMin = 0;
+
+export const getStockAiPicksResponseAdvancesMin = 0;
+
+export const getStockAiPicksResponseDeclinesMin = 0;
+
+export const getStockAiPicksResponseUnchangedMin = 0;
+
+export const getStockAiPicksResponseForwardValidationSampleCountMin = 0;
+
+export const getStockAiPicksResponseForwardValidationCorrectCountMin = 0;
+
+export const getStockAiPicksResponseForwardValidationHitRatePercentMin = 0;
+export const getStockAiPicksResponseForwardValidationHitRatePercentMax = 100;
+
+export const getStockAiPicksResponseForwardValidationLowerBoundPercentMin = 0;
+export const getStockAiPicksResponseForwardValidationLowerBoundPercentMax = 100;
+
+export const getStockAiPicksResponseForwardValidationUpperBoundPercentMin = 0;
+export const getStockAiPicksResponseForwardValidationUpperBoundPercentMax = 100;
+
+export const getStockAiPicksResponseForwardValidationBrierScoreMin = 0;
+export const getStockAiPicksResponseForwardValidationBrierScoreMax = 1;
+
+
+export const getStockAiPicksResponseWatchlistItemReferencePriceExclusiveMin = 0;
+
+export const getStockAiPicksResponseWatchlistMax = 5;
+
+export const getStockAiPicksResponsePicksItemCloseExclusiveMin = 0;
+
+export const getStockAiPicksResponsePicksItemTradedValueMin = 0;
+
+export const getStockAiPicksResponsePicksItemReferencePriceExclusiveMin = 0;
+
+export const getStockAiPicksResponsePicksItemDirectionProbabilityPercentMin = 0;
+export const getStockAiPicksResponsePicksItemDirectionProbabilityPercentMax = 95;
+
+export const getStockAiPicksResponsePicksItemAiDirectionProbabilityPercentMin = 0;
+export const getStockAiPicksResponsePicksItemAiDirectionProbabilityPercentMax = 95;
+
+export const getStockAiPicksResponsePicksItemRuleHitRatePercentMin = 0;
+export const getStockAiPicksResponsePicksItemRuleHitRatePercentMax = 100;
+
+export const getStockAiPicksResponsePicksItemRuleCorrectCountMin = 0;
+
+export const getStockAiPicksResponsePicksItemRuleSampleCountMin = 0;
+
+export const getStockAiPicksResponsePicksItemRuleLowerBoundPercentMin = 0;
+export const getStockAiPicksResponsePicksItemRuleLowerBoundPercentMax = 100;
+
+export const getStockAiPicksResponsePicksItemRuleUpperBoundPercentMin = 0;
+export const getStockAiPicksResponsePicksItemRuleUpperBoundPercentMax = 100;
+
+export const getStockAiPicksResponsePicksItemHistoricalAiDirectionHitRatePercentMin = 0;
+export const getStockAiPicksResponsePicksItemHistoricalAiDirectionHitRatePercentMax = 100;
+
+export const getStockAiPicksResponsePicksItemHistoricalDirectionLowerBoundPercentMin = 0;
+export const getStockAiPicksResponsePicksItemHistoricalDirectionLowerBoundPercentMax = 100;
+
+export const getStockAiPicksResponsePicksItemHistoricalDirectionSampleCountMin = 0;
+
+export const getStockAiPicksResponsePicksItemHistoricalAiPricePlanHitRatePercentMin = 0;
+export const getStockAiPicksResponsePicksItemHistoricalAiPricePlanHitRatePercentMax = 100;
+
+export const getStockAiPicksResponsePicksItemHistoricalPricePlanLowerBoundPercentMin = 0;
+export const getStockAiPicksResponsePicksItemHistoricalPricePlanLowerBoundPercentMax = 100;
+
+export const getStockAiPicksResponsePicksItemHistoricalPricePlanSampleCountMin = 0;
+
+export const getStockAiPicksResponsePicksItemCdpLevelsOneCdpExclusiveMin = 0;
+
+export const getStockAiPicksResponsePicksItemCdpLevelsOneAhExclusiveMin = 0;
+
+export const getStockAiPicksResponsePicksItemCdpLevelsOneNhExclusiveMin = 0;
+
+export const getStockAiPicksResponsePicksItemCdpLevelsOneNlExclusiveMin = 0;
+
+export const getStockAiPicksResponsePicksItemCdpLevelsOneAlExclusiveMin = 0;
+
+export const getStockAiPicksResponsePicksItemOperationPlanEntryPriceMin = 0;
+
+export const getStockAiPicksResponsePicksItemOperationPlanTargetPriceMin = 0;
+
+export const getStockAiPicksResponsePicksItemOperationPlanStopPriceMin = 0;
+
+export const getStockAiPicksResponsePicksItemOperationPlanRewardToRiskMin = 0;
+
+export const getStockAiPicksResponsePicksMax = 30;
+
+
+
+export const GetStockAiPicksResponse = zod.object({
+  "marketDate": zod.coerce.date(),
+  "analyzedAt": zod.coerce.date(),
+  "source": zod.string(),
+  "marketSummary": zod.union([zod.object({
+  "ticker": zod.string(),
+  "source": zod.string(),
+  "asOf": zod.coerce.date(),
+  "currentPrice": zod.number(),
+  "change": zod.number(),
+  "changePercent": zod.number(),
+  "dailyCloseDate": zod.coerce.date(),
+  "dailyCloseSource": zod.string(),
+  "dailyClosePrice": zod.number(),
+  "dailyCloseChange": zod.number(),
+  "dailyCloseChangePercent": zod.number(),
+  "ma20": zod.number().nullable(),
+  "ma60": zod.number().nullable(),
+  "ma120": zod.number().nullable(),
+  "score": zod.number().int().nullable(),
+  "status": zod.enum(['bullish', 'neutral', 'bearish', 'insufficient']),
+  "factors": zod.array(zod.object({
+  "key": zod.string(),
+  "label": zod.string(),
+  "passed": zod.boolean().nullable(),
+  "observedValue": zod.number().nullable(),
+  "threshold": zod.number().nullable()
+}))
+}),zod.null()]),
+  "marketIndexQuote": zod.object({
+  "key": zod.enum(['taiex', 'futures_day', 'futures_night', 'us_tsm_adr', 'us_sox']),
+  "name": zod.string(),
+  "ticker": zod.string(),
+  "price": zod.number().nullable(),
+  "change": zod.number().nullable(),
+  "changePercent": zod.number().nullable(),
+  "source": zod.string().nullable(),
+  "asOf": zod.coerce.date().nullable(),
+  "available": zod.boolean(),
+  "error": zod.string().nullable()
+}),
+  "scannedCount": zod.number().int().min(getStockAiPicksResponseScannedCountMin),
+  "candidateCount": zod.number().int().min(getStockAiPicksResponseCandidateCountMin),
+  "marketContextStatus": zod.enum(['complete', 'partial']),
+  "marketContextNote": zod.string(),
+  "advances": zod.number().int().min(getStockAiPicksResponseAdvancesMin),
+  "declines": zod.number().int().min(getStockAiPicksResponseDeclinesMin),
+  "unchanged": zod.number().int().min(getStockAiPicksResponseUnchangedMin),
+  "marketView": zod.string(),
+  "probabilityDefinition": zod.string(),
+  "riskNote": zod.string(),
+  "forwardValidation": zod.object({
+  "status": zod.enum(['collecting', 'available', 'unavailable']),
+  "horizonDays": zod.literal(5),
+  "sampleCount": zod.number().int().min(getStockAiPicksResponseForwardValidationSampleCountMin),
+  "correctCount": zod.number().int().min(getStockAiPicksResponseForwardValidationCorrectCountMin),
+  "hitRatePercent": zod.number().min(getStockAiPicksResponseForwardValidationHitRatePercentMin).max(getStockAiPicksResponseForwardValidationHitRatePercentMax).nullable(),
+  "lowerBoundPercent": zod.number().min(getStockAiPicksResponseForwardValidationLowerBoundPercentMin).max(getStockAiPicksResponseForwardValidationLowerBoundPercentMax).nullable(),
+  "upperBoundPercent": zod.number().min(getStockAiPicksResponseForwardValidationUpperBoundPercentMin).max(getStockAiPicksResponseForwardValidationUpperBoundPercentMax).nullable(),
+  "brierScore": zod.number().min(getStockAiPicksResponseForwardValidationBrierScoreMin).max(getStockAiPicksResponseForwardValidationBrierScoreMax).nullable(),
+  "minimumSampleCount": zod.number().int().min(1),
+  "updatedAt": zod.coerce.date().nullable(),
+  "methodNote": zod.string()
+}),
+  "aiSelectionAttempted": zod.boolean().optional().describe('Whether a final AI selection batch was actually executed.'),
+  "aiProvider": zod.enum(['openai', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'gemini', 'nvidia_nim']),
+  "watchlist": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "referencePrice": zod.number().gt(getStockAiPicksResponseWatchlistItemReferencePriceExclusiveMin),
+  "failedStage": zod.enum(['historical_data', 'smc_signal', 'reward_to_risk', 'backtest']),
+  "failureReason": zod.string(),
+  "observation": zod.string().optional().describe('Specific verified conditions to monitor next; this is not an entry instruction.')
+})).max(getStockAiPicksResponseWatchlistMax).optional().describe('Separate non-qualified observation candidates; these are not AI picks or trade recommendations.'),
+  "picks": zod.array(zod.object({
+  "symbol": zod.string(),
+  "ticker": zod.string(),
+  "name": zod.string(),
+  "close": zod.number().gt(getStockAiPicksResponsePicksItemCloseExclusiveMin),
+  "change": zod.number().nullable(),
+  "changePercent": zod.number().nullable(),
+  "tradedValue": zod.number().min(getStockAiPicksResponsePicksItemTradedValueMin),
+  "referencePrice": zod.number().gt(getStockAiPicksResponsePicksItemReferencePriceExclusiveMin),
+  "referenceChange": zod.number().nullable(),
+  "referenceChangePercent": zod.number().nullable(),
+  "referenceType": zod.enum(['verified_trade', 'official_daily_close']),
+  "referenceAsOf": zod.coerce.date().nullable(),
+  "referenceSource": zod.string(),
+  "directionProbabilityPercent": zod.number().int().min(getStockAiPicksResponsePicksItemDirectionProbabilityPercentMin).max(getStockAiPicksResponsePicksItemDirectionProbabilityPercentMax),
+  "aiDirectionProbabilityPercent": zod.number().int().min(getStockAiPicksResponsePicksItemAiDirectionProbabilityPercentMin).max(getStockAiPicksResponsePicksItemAiDirectionProbabilityPercentMax),
+  "ruleHitRatePercent": zod.number().min(getStockAiPicksResponsePicksItemRuleHitRatePercentMin).max(getStockAiPicksResponsePicksItemRuleHitRatePercentMax).nullable(),
+  "ruleCorrectCount": zod.number().int().min(getStockAiPicksResponsePicksItemRuleCorrectCountMin),
+  "ruleSampleCount": zod.number().int().min(getStockAiPicksResponsePicksItemRuleSampleCountMin),
+  "ruleLowerBoundPercent": zod.number().min(getStockAiPicksResponsePicksItemRuleLowerBoundPercentMin).max(getStockAiPicksResponsePicksItemRuleLowerBoundPercentMax).nullable(),
+  "ruleUpperBoundPercent": zod.number().min(getStockAiPicksResponsePicksItemRuleUpperBoundPercentMin).max(getStockAiPicksResponsePicksItemRuleUpperBoundPercentMax).nullable(),
+  "historicalValidationQualified": zod.boolean(),
+  "historicalAiDirectionHitRatePercent": zod.number().min(getStockAiPicksResponsePicksItemHistoricalAiDirectionHitRatePercentMin).max(getStockAiPicksResponsePicksItemHistoricalAiDirectionHitRatePercentMax).nullable(),
+  "historicalDirectionLowerBoundPercent": zod.number().min(getStockAiPicksResponsePicksItemHistoricalDirectionLowerBoundPercentMin).max(getStockAiPicksResponsePicksItemHistoricalDirectionLowerBoundPercentMax).nullable(),
+  "historicalDirectionSampleCount": zod.number().int().min(getStockAiPicksResponsePicksItemHistoricalDirectionSampleCountMin),
+  "historicalAiPricePlanHitRatePercent": zod.number().min(getStockAiPicksResponsePicksItemHistoricalAiPricePlanHitRatePercentMin).max(getStockAiPicksResponsePicksItemHistoricalAiPricePlanHitRatePercentMax).nullable(),
+  "historicalPricePlanLowerBoundPercent": zod.number().min(getStockAiPicksResponsePicksItemHistoricalPricePlanLowerBoundPercentMin).max(getStockAiPicksResponsePicksItemHistoricalPricePlanLowerBoundPercentMax).nullable(),
+  "historicalPricePlanSampleCount": zod.number().int().min(getStockAiPicksResponsePicksItemHistoricalPricePlanSampleCountMin),
+  "cdpLevels": zod.union([zod.object({
+  "referenceDate": zod.coerce.date(),
+  "cdp": zod.number().gt(getStockAiPicksResponsePicksItemCdpLevelsOneCdpExclusiveMin),
+  "ah": zod.number().gt(getStockAiPicksResponsePicksItemCdpLevelsOneAhExclusiveMin),
+  "nh": zod.number().gt(getStockAiPicksResponsePicksItemCdpLevelsOneNhExclusiveMin),
+  "nl": zod.number().gt(getStockAiPicksResponsePicksItemCdpLevelsOneNlExclusiveMin),
+  "al": zod.number().gt(getStockAiPicksResponsePicksItemCdpLevelsOneAlExclusiveMin),
+  "currentZone": zod.enum(['above_ah', 'ah_to_nh', 'nh_to_cdp', 'cdp_to_nl', 'nl_to_al', 'below_al']),
+  "openingZone": zod.union([zod.literal('above_ah'),zod.literal('ah_to_nh'),zod.literal('nh_to_cdp'),zod.literal('cdp_to_nl'),zod.literal('nl_to_al'),zod.literal('below_al'),zod.literal(null)]).nullable()
+}),zod.null()]).optional(),
+  "operationPlan": zod.object({
+  "action": zod.enum(['wait_for_pullback', 'conditional_entry', 'no_trade']),
+  "entryPrice": zod.number().min(getStockAiPicksResponsePicksItemOperationPlanEntryPriceMin).nullable(),
+  "targetPrice": zod.number().min(getStockAiPicksResponsePicksItemOperationPlanTargetPriceMin).nullable(),
+  "stopPrice": zod.number().min(getStockAiPicksResponsePicksItemOperationPlanStopPriceMin).nullable(),
+  "rewardToRisk": zod.number().min(getStockAiPicksResponsePicksItemOperationPlanRewardToRiskMin).nullable()
+}),
+  "reason": zod.string(),
+  "probabilityEvidence": zod.string(),
+  "screeningReportMarkdown": zod.string()
+})).max(getStockAiPicksResponsePicksMax),
+  "dailyPendingChanges": zod.array(zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "action": zod.enum(['continued', 'removed', 'added']),
+  "detail": zod.string()
+})).optional()
 })
 
 
@@ -400,6 +1284,63 @@ export const getStockAiAssessmentResponseForecastPathItemHighPriceExclusiveMin =
 export const getStockAiAssessmentResponseForecastPathMin = 0;
 export const getStockAiAssessmentResponseForecastPathMax = 5;
 
+export const getStockAiAssessmentResponseScorecardEarnedPointsMin = 0;
+export const getStockAiAssessmentResponseScorecardEarnedPointsMax = 100;
+
+export const getStockAiAssessmentResponseScorecardAvailablePointsMin = 0;
+export const getStockAiAssessmentResponseScorecardAvailablePointsMax = 100;
+
+export const getStockAiAssessmentResponseScorecardNoteMax = 240;
+
+export const getStockAiAssessmentResponseScorecardItemsItemIdMax = 40;
+
+export const getStockAiAssessmentResponseScorecardItemsItemLabelMax = 80;
+
+export const getStockAiAssessmentResponseScorecardItemsItemPointsMin = 0;
+export const getStockAiAssessmentResponseScorecardItemsItemPointsMax = 20;
+
+export const getStockAiAssessmentResponseScorecardItemsItemMaximumPointsMax = 20;
+
+export const getStockAiAssessmentResponseScorecardItemsItemNoteMax = 240;
+
+export const getStockAiAssessmentResponseScorecardItemsMax = 12;
+
+export const getStockAiAssessmentResponseTradeScenariosReferencePriceExclusiveMin = 0;
+
+export const getStockAiAssessmentResponseTradeScenariosSupportPriceExclusiveMin = 0;
+
+export const getStockAiAssessmentResponseTradeScenariosResistancePriceExclusiveMin = 0;
+
+export const getStockAiAssessmentResponseTradeScenariosDeepSupportPriceExclusiveMin = 0;
+
+export const getStockAiAssessmentResponseTradeScenariosDirectEntryEntryPriceExclusiveMin = 0;
+
+export const getStockAiAssessmentResponseTradeScenariosDirectEntryTargetPriceExclusiveMin = 0;
+
+export const getStockAiAssessmentResponseTradeScenariosDirectEntryStopPriceExclusiveMin = 0;
+
+export const getStockAiAssessmentResponseTradeScenariosDirectEntryProfitPercentMin = 0;
+
+export const getStockAiAssessmentResponseTradeScenariosDirectEntryLossPercentMin = 0;
+
+export const getStockAiAssessmentResponseTradeScenariosDirectEntryRewardToRiskMin = 0;
+
+export const getStockAiAssessmentResponseTradeScenariosPullbackEntryEntryPriceExclusiveMin = 0;
+
+export const getStockAiAssessmentResponseTradeScenariosPullbackEntryTargetPriceExclusiveMin = 0;
+
+export const getStockAiAssessmentResponseTradeScenariosPullbackEntryStopPriceExclusiveMin = 0;
+
+export const getStockAiAssessmentResponseTradeScenariosPullbackEntryProfitPercentMin = 0;
+
+export const getStockAiAssessmentResponseTradeScenariosPullbackEntryLossPercentMin = 0;
+
+export const getStockAiAssessmentResponseTradeScenariosPullbackEntryRewardToRiskMin = 0;
+
+export const getStockAiAssessmentResponseTradeScenariosMethodNoteMax = 400;
+
+export const getStockAiAssessmentResponseReportMarkdownMax = 5000;
+
 export const getStockAiAssessmentResponseHistoricalStrategyBacktestSampleCountMin = 0;
 
 export const getStockAiAssessmentResponseHistoricalStrategyBacktestWinsMin = 0;
@@ -444,11 +1385,35 @@ export const getStockAiAssessmentResponseForwardDirectionValidationMessageMax = 
 export const getStockAiAssessmentResponseForwardDirectionValidationMethodNoteMax = 600;
 
 
+export const getStockAiAssessmentResponsePricePlanValidationForecastCountMin = 0;
+
+export const getStockAiAssessmentResponsePricePlanValidationPendingCountMin = 0;
+
+export const getStockAiAssessmentResponsePricePlanValidationTargetFirstCountMin = 0;
+
+export const getStockAiAssessmentResponsePricePlanValidationStopFirstCountMin = 0;
+
+export const getStockAiAssessmentResponsePricePlanValidationNoEntryCountMin = 0;
+
+export const getStockAiAssessmentResponsePricePlanValidationAmbiguousCountMin = 0;
+
+export const getStockAiAssessmentResponsePricePlanValidationExpiredCountMin = 0;
+
+export const getStockAiAssessmentResponsePricePlanValidationResolvedTradeCountMin = 0;
+
+export const getStockAiAssessmentResponsePricePlanValidationWinRatePercentMin = 0;
+export const getStockAiAssessmentResponsePricePlanValidationWinRatePercentMax = 100;
+
+export const getStockAiAssessmentResponsePricePlanValidationMessageMax = 240;
+
+export const getStockAiAssessmentResponsePricePlanValidationMethodNoteMax = 600;
+
+
 
 export const GetStockAiAssessmentResponse = zod.object({
   "symbol": zod.string(),
   "ticker": zod.string(),
-  "aiProvider": zod.union([zod.literal('openai'),zod.literal('1min_ai'),zod.literal('agnes_ai'),zod.literal('groq'),zod.literal('ollama'),zod.literal('openrouter'),zod.literal('gemini'),zod.literal(null)]).nullable(),
+  "aiProvider": zod.union([zod.literal('openai'),zod.literal('1min_ai'),zod.literal('agnes_ai'),zod.literal('groq'),zod.literal('ollama'),zod.literal('openrouter'),zod.literal('gemini'),zod.literal('nvidia_nim'),zod.literal('rule_based'),zod.literal(null)]).nullable(),
   "source": zod.string(),
   "quoteAsOf": zod.coerce.date().nullable(),
   "referencePrice": zod.number().gt(getStockAiAssessmentResponseReferencePriceExclusiveMin).describe('Price used as the starting reference for this assessment.'),
@@ -565,6 +1530,45 @@ export const GetStockAiAssessmentResponse = zod.object({
   "centralPrice": zod.number().gt(getStockAiAssessmentResponseForecastPathItemCentralPriceExclusiveMin),
   "highPrice": zod.number().gt(getStockAiAssessmentResponseForecastPathItemHighPriceExclusiveMin)
 })).min(getStockAiAssessmentResponseForecastPathMin).max(getStockAiAssessmentResponseForecastPathMax).describe('AI-estimated low, central, and high scenario values for each of the next five trading days.'),
+  "scorecard": zod.object({
+  "earnedPoints": zod.number().int().min(getStockAiAssessmentResponseScorecardEarnedPointsMin).max(getStockAiAssessmentResponseScorecardEarnedPointsMax),
+  "availablePoints": zod.number().int().min(getStockAiAssessmentResponseScorecardAvailablePointsMin).max(getStockAiAssessmentResponseScorecardAvailablePointsMax),
+  "maximumPoints": zod.literal(100),
+  "complete": zod.boolean(),
+  "note": zod.string().max(getStockAiAssessmentResponseScorecardNoteMax),
+  "items": zod.array(zod.object({
+  "id": zod.string().max(getStockAiAssessmentResponseScorecardItemsItemIdMax),
+  "label": zod.string().max(getStockAiAssessmentResponseScorecardItemsItemLabelMax),
+  "points": zod.number().int().min(getStockAiAssessmentResponseScorecardItemsItemPointsMin).max(getStockAiAssessmentResponseScorecardItemsItemPointsMax).nullable(),
+  "maximumPoints": zod.number().int().min(1).max(getStockAiAssessmentResponseScorecardItemsItemMaximumPointsMax),
+  "status": zod.enum(['available', 'unavailable']),
+  "note": zod.string().max(getStockAiAssessmentResponseScorecardItemsItemNoteMax)
+})).max(getStockAiAssessmentResponseScorecardItemsMax)
+}),
+  "tradeScenarios": zod.object({
+  "referencePrice": zod.number().gt(getStockAiAssessmentResponseTradeScenariosReferencePriceExclusiveMin),
+  "supportPrice": zod.number().gt(getStockAiAssessmentResponseTradeScenariosSupportPriceExclusiveMin).nullable(),
+  "resistancePrice": zod.number().gt(getStockAiAssessmentResponseTradeScenariosResistancePriceExclusiveMin).nullable(),
+  "deepSupportPrice": zod.number().gt(getStockAiAssessmentResponseTradeScenariosDeepSupportPriceExclusiveMin).nullable(),
+  "directEntry": zod.object({
+  "entryPrice": zod.number().gt(getStockAiAssessmentResponseTradeScenariosDirectEntryEntryPriceExclusiveMin).nullable(),
+  "targetPrice": zod.number().gt(getStockAiAssessmentResponseTradeScenariosDirectEntryTargetPriceExclusiveMin).nullable(),
+  "stopPrice": zod.number().gt(getStockAiAssessmentResponseTradeScenariosDirectEntryStopPriceExclusiveMin).nullable(),
+  "profitPercent": zod.number().min(getStockAiAssessmentResponseTradeScenariosDirectEntryProfitPercentMin).nullable(),
+  "lossPercent": zod.number().min(getStockAiAssessmentResponseTradeScenariosDirectEntryLossPercentMin).nullable(),
+  "rewardToRisk": zod.number().min(getStockAiAssessmentResponseTradeScenariosDirectEntryRewardToRiskMin).nullable()
+}),
+  "pullbackEntry": zod.object({
+  "entryPrice": zod.number().gt(getStockAiAssessmentResponseTradeScenariosPullbackEntryEntryPriceExclusiveMin).nullable(),
+  "targetPrice": zod.number().gt(getStockAiAssessmentResponseTradeScenariosPullbackEntryTargetPriceExclusiveMin).nullable(),
+  "stopPrice": zod.number().gt(getStockAiAssessmentResponseTradeScenariosPullbackEntryStopPriceExclusiveMin).nullable(),
+  "profitPercent": zod.number().min(getStockAiAssessmentResponseTradeScenariosPullbackEntryProfitPercentMin).nullable(),
+  "lossPercent": zod.number().min(getStockAiAssessmentResponseTradeScenariosPullbackEntryLossPercentMin).nullable(),
+  "rewardToRisk": zod.number().min(getStockAiAssessmentResponseTradeScenariosPullbackEntryRewardToRiskMin).nullable()
+}),
+  "methodNote": zod.string().max(getStockAiAssessmentResponseTradeScenariosMethodNoteMax)
+}),
+  "reportMarkdown": zod.string().max(getStockAiAssessmentResponseReportMarkdownMax),
   "historicalStrategyBacktest": zod.object({
   "status": zod.enum(['calibrated', 'insufficient_data']),
   "sampleCount": zod.number().int().min(getStockAiAssessmentResponseHistoricalStrategyBacktestSampleCountMin),
@@ -598,7 +1602,92 @@ export const GetStockAiAssessmentResponse = zod.object({
   "message": zod.string().max(getStockAiAssessmentResponseForwardDirectionValidationMessageMax).nullable(),
   "methodNote": zod.string().max(getStockAiAssessmentResponseForwardDirectionValidationMethodNoteMax)
 }),
+  "pricePlanValidation": zod.object({
+  "status": zod.enum(['collecting', 'unavailable']),
+  "source": zod.string(),
+  "updatedAt": zod.coerce.date().nullable(),
+  "minimumSampleCount": zod.number().int().min(1),
+  "forecastCount": zod.number().int().min(getStockAiAssessmentResponsePricePlanValidationForecastCountMin),
+  "pendingCount": zod.number().int().min(getStockAiAssessmentResponsePricePlanValidationPendingCountMin),
+  "targetFirstCount": zod.number().int().min(getStockAiAssessmentResponsePricePlanValidationTargetFirstCountMin),
+  "stopFirstCount": zod.number().int().min(getStockAiAssessmentResponsePricePlanValidationStopFirstCountMin),
+  "noEntryCount": zod.number().int().min(getStockAiAssessmentResponsePricePlanValidationNoEntryCountMin),
+  "ambiguousCount": zod.number().int().min(getStockAiAssessmentResponsePricePlanValidationAmbiguousCountMin),
+  "expiredCount": zod.number().int().min(getStockAiAssessmentResponsePricePlanValidationExpiredCountMin),
+  "resolvedTradeCount": zod.number().int().min(getStockAiAssessmentResponsePricePlanValidationResolvedTradeCountMin),
+  "winRatePercent": zod.number().min(getStockAiAssessmentResponsePricePlanValidationWinRatePercentMin).max(getStockAiAssessmentResponsePricePlanValidationWinRatePercentMax).nullable(),
+  "message": zod.string().max(getStockAiAssessmentResponsePricePlanValidationMessageMax).nullable(),
+  "methodNote": zod.string().max(getStockAiAssessmentResponsePricePlanValidationMethodNoteMax)
+}),
   "disclaimer": zod.string()
+})
+
+
+/**
+ * Uses official historical daily bars and non-overlapping five-trading-day windows. Each AI forecast sees only data available on its forecast date; future bars are used only for settlement. Progress is persisted and can be resumed.
+ * @summary Run the next batch of isolated AI historical forecasts for one stock
+ */
+export const runStockAiHistoricalValidationBatchBodySymbolRegExp = new RegExp('^[A-Za-z0-9]{4,6}(\\.(TW|TWO))?$');
+
+
+export const RunStockAiHistoricalValidationBatchBody = zod.object({
+  "symbol": zod.string().regex(runStockAiHistoricalValidationBatchBodySymbolRegExp)
+})
+
+export const runStockAiHistoricalValidationBatchResponseProcessedForecastCountMin = 0;
+
+export const runStockAiHistoricalValidationBatchResponseRequiredForecastCountMin = 0;
+
+export const runStockAiHistoricalValidationBatchResponseDirectionSampleCountMin = 0;
+
+export const runStockAiHistoricalValidationBatchResponseDirectionCorrectCountMin = 0;
+
+export const runStockAiHistoricalValidationBatchResponseProgramBaselineSampleCountMin = 0;
+
+export const runStockAiHistoricalValidationBatchResponseProgramBaselineCorrectCountMin = 0;
+
+export const runStockAiHistoricalValidationBatchResponseProgramBaselineHitRatePercentMin = 0;
+export const runStockAiHistoricalValidationBatchResponseProgramBaselineHitRatePercentMax = 100;
+
+export const runStockAiHistoricalValidationBatchResponseCalibrationSampleCountMin = 0;
+
+export const runStockAiHistoricalValidationBatchResponseMeanForecastProbabilityPercentMin = 0;
+export const runStockAiHistoricalValidationBatchResponseMeanForecastProbabilityPercentMax = 100;
+
+export const runStockAiHistoricalValidationBatchResponseCalibrationGapPercentMin = -100;
+export const runStockAiHistoricalValidationBatchResponseCalibrationGapPercentMax = 100;
+
+export const runStockAiHistoricalValidationBatchResponseDirectionLowerBoundPercentMin = 0;
+export const runStockAiHistoricalValidationBatchResponseDirectionLowerBoundPercentMax = 100;
+
+export const runStockAiHistoricalValidationBatchResponsePricePlanSampleCountMin = 0;
+
+export const runStockAiHistoricalValidationBatchResponsePricePlanTargetFirstCountMin = 0;
+
+export const runStockAiHistoricalValidationBatchResponsePricePlanLowerBoundPercentMin = 0;
+export const runStockAiHistoricalValidationBatchResponsePricePlanLowerBoundPercentMax = 100;
+
+
+
+export const RunStockAiHistoricalValidationBatchResponse = zod.object({
+  "symbol": zod.string(),
+  "status": zod.enum(['collecting', 'qualified', 'not_qualified', 'insufficient_history']),
+  "processedForecastCount": zod.number().int().min(runStockAiHistoricalValidationBatchResponseProcessedForecastCountMin),
+  "requiredForecastCount": zod.number().int().min(runStockAiHistoricalValidationBatchResponseRequiredForecastCountMin),
+  "directionSampleCount": zod.number().int().min(runStockAiHistoricalValidationBatchResponseDirectionSampleCountMin),
+  "directionCorrectCount": zod.number().int().min(runStockAiHistoricalValidationBatchResponseDirectionCorrectCountMin),
+  "programBaselineSampleCount": zod.number().int().min(runStockAiHistoricalValidationBatchResponseProgramBaselineSampleCountMin),
+  "programBaselineCorrectCount": zod.number().int().min(runStockAiHistoricalValidationBatchResponseProgramBaselineCorrectCountMin),
+  "programBaselineHitRatePercent": zod.number().min(runStockAiHistoricalValidationBatchResponseProgramBaselineHitRatePercentMin).max(runStockAiHistoricalValidationBatchResponseProgramBaselineHitRatePercentMax).nullable(),
+  "calibrationSampleCount": zod.number().int().min(runStockAiHistoricalValidationBatchResponseCalibrationSampleCountMin),
+  "meanForecastProbabilityPercent": zod.number().min(runStockAiHistoricalValidationBatchResponseMeanForecastProbabilityPercentMin).max(runStockAiHistoricalValidationBatchResponseMeanForecastProbabilityPercentMax).nullable(),
+  "calibrationGapPercent": zod.number().min(runStockAiHistoricalValidationBatchResponseCalibrationGapPercentMin).max(runStockAiHistoricalValidationBatchResponseCalibrationGapPercentMax).nullable(),
+  "directionLowerBoundPercent": zod.number().min(runStockAiHistoricalValidationBatchResponseDirectionLowerBoundPercentMin).max(runStockAiHistoricalValidationBatchResponseDirectionLowerBoundPercentMax).nullable(),
+  "pricePlanSampleCount": zod.number().int().min(runStockAiHistoricalValidationBatchResponsePricePlanSampleCountMin),
+  "pricePlanTargetFirstCount": zod.number().int().min(runStockAiHistoricalValidationBatchResponsePricePlanTargetFirstCountMin),
+  "pricePlanLowerBoundPercent": zod.number().min(runStockAiHistoricalValidationBatchResponsePricePlanLowerBoundPercentMin).max(runStockAiHistoricalValidationBatchResponsePricePlanLowerBoundPercentMax).nullable(),
+  "qualified": zod.boolean(),
+  "message": zod.string()
 })
 
 
@@ -628,7 +1717,7 @@ export const EvaluateStockAiBuyPriceResponse = zod.object({
   "currentPrice": zod.number(),
   "quoteAsOf": zod.coerce.date(),
   "analysisAsOf": zod.coerce.date(),
-  "aiProvider": zod.enum(['openai', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'gemini']),
+  "aiProvider": zod.enum(['openai', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'gemini', 'nvidia_nim']),
   "verdict": zod.enum(['buy', 'do_not_buy']),
   "reason": zod.string().max(evaluateStockAiBuyPriceResponseReasonMax),
   "analyzedAt": zod.coerce.date(),
@@ -671,8 +1760,9 @@ export const askStockAiAssistantResponseContextSourcesMax = 5;
 export const AskStockAiAssistantResponse = zod.object({
   "symbol": zod.string(),
   "ticker": zod.string(),
-  "aiProvider": zod.enum(['openai', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'gemini']),
+  "aiProvider": zod.enum(['openai', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'gemini', 'nvidia_nim']),
   "answer": zod.string().max(askStockAiAssistantResponseAnswerMax),
+  "positionAction": zod.enum(['add', 'hold', 'no_add', 'reduce', 'take_profit', 'stop_loss', 'exit', 'wait', 'insufficient']),
   "citedFacts": zod.array(zod.string().max(askStockAiAssistantResponseCitedFactsItemMax)).max(askStockAiAssistantResponseCitedFactsMax),
   "context": zod.object({
   "quoteAsOf": zod.coerce.date().nullable(),
@@ -725,7 +1815,7 @@ export const askAssistantChatResponseSourcesMax = 5;
 
 export const AskAssistantChatResponse = zod.object({
   "answer": zod.string().min(1).max(askAssistantChatResponseAnswerMax),
-  "aiProvider": zod.enum(['openai', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'gemini', 'rule_based']),
+  "aiProvider": zod.enum(['openai', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'gemini', 'nvidia_nim', 'rule_based']),
   "searchStatus": zod.enum(['searched', 'not_needed', 'unavailable']),
   "sources": zod.array(zod.object({
   "title": zod.string().min(1).max(askAssistantChatResponseSourcesItemTitleMax),
@@ -747,6 +1837,11 @@ export const getAccountMeResponseWatchlistItemNameMax = 60;
 
 export const getAccountMeResponseWatchlistMax = 100;
 
+export const getAccountMeResponseEtfHoldingsItemSymbolRegExp = new RegExp('^00[A-Z0-9]{2,4}$');
+export const getAccountMeResponseEtfHoldingsItemSharesMax = 100000000;
+
+export const getAccountMeResponseEtfHoldingsMax = 100;
+
 
 
 export const GetAccountMeResponse = zod.object({
@@ -757,7 +1852,186 @@ export const GetAccountMeResponse = zod.object({
   "symbol": zod.string().min(getAccountMeResponseWatchlistItemSymbolMin).max(getAccountMeResponseWatchlistItemSymbolMax).regex(getAccountMeResponseWatchlistItemSymbolRegExp),
   "name": zod.string().min(1).max(getAccountMeResponseWatchlistItemNameMax)
 })).max(getAccountMeResponseWatchlistMax),
+  "etfHoldings": zod.array(zod.object({
+  "symbol": zod.string().regex(getAccountMeResponseEtfHoldingsItemSymbolRegExp),
+  "shares": zod.number().int().min(1).max(getAccountMeResponseEtfHoldingsItemSharesMax)
+})).max(getAccountMeResponseEtfHoldingsMax),
   "maxWatchlistItems": zod.number().int()
+})
+
+
+/**
+ * Returns the signed-in account's saved CEO research tasks, including tasks submitted through its linked LINE account.
+ * @summary List CEO research jobs
+ */
+export const getAccountResearchJobsResponseAgentsItemSourcesItemTitleMax = 180;
+
+export const getAccountResearchJobsResponseAgentsItemSourcesItemUrlMax = 1000;
+
+
+
+export const GetAccountResearchJobsResponseItem = zod.object({
+  "id": zod.string(),
+  "channel": zod.enum(['web', 'line']),
+  "question": zod.string(),
+  "status": zod.enum(['queued', 'running', 'completed', 'failed']),
+  "answer": zod.string(),
+  "agents": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "specialty": zod.string(),
+  "task": zod.string(),
+  "status": zod.enum(['queued', 'running', 'completed', 'failed']),
+  "analysis": zod.string(),
+  "sources": zod.array(zod.object({
+  "title": zod.string().min(1).max(getAccountResearchJobsResponseAgentsItemSourcesItemTitleMax),
+  "url": zod.string().url().max(getAccountResearchJobsResponseAgentsItemSourcesItemUrlMax)
+}))
+})),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+export const GetAccountResearchJobsResponse = zod.array(GetAccountResearchJobsResponseItem)
+
+
+/**
+ * @summary List signed-in user's individual-stock research agents
+ */
+export const GetAccountStockResearchAgentsResponseItem = zod.object({
+  "id": zod.string(),
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "mission": zod.string(),
+  "enabled": zod.boolean(),
+  "nextRunAt": zod.coerce.date(),
+  "lastRunAt": zod.coerce.date().nullable(),
+  "lastMarketDate": zod.string().nullable(),
+  "lastError": zod.string().nullable(),
+  "reports": zod.array(zod.object({
+  "status": zod.enum(['completed', 'failed']),
+  "marketDate": zod.string().nullable(),
+  "asOf": zod.coerce.date(),
+  "answer": zod.string(),
+  "assessment": zod.record(zod.string(), zod.unknown()).optional(),
+  "error": zod.string().optional()
+})),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+export const GetAccountStockResearchAgentsResponse = zod.array(GetAccountStockResearchAgentsResponseItem)
+
+
+/**
+ * @summary Create a daily stock research agent
+ */
+export const createAccountStockResearchAgentBodySymbolMin = 4;
+export const createAccountStockResearchAgentBodySymbolMax = 6;
+
+
+export const createAccountStockResearchAgentBodySymbolRegExp = new RegExp('^[A-Za-z0-9]{4,6}$');
+export const createAccountStockResearchAgentBodyMissionMax = 500;
+
+
+
+export const CreateAccountStockResearchAgentBody = zod.object({
+  "symbol": zod.string().min(createAccountStockResearchAgentBodySymbolMin).max(createAccountStockResearchAgentBodySymbolMax).regex(createAccountStockResearchAgentBodySymbolRegExp),
+  "mission": zod.string().min(1).max(createAccountStockResearchAgentBodyMissionMax)
+})
+
+export const CreateAccountStockResearchAgentResponse = zod.object({
+  "id": zod.string(),
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "mission": zod.string(),
+  "enabled": zod.boolean(),
+  "nextRunAt": zod.coerce.date(),
+  "lastRunAt": zod.coerce.date().nullable(),
+  "lastMarketDate": zod.string().nullable(),
+  "lastError": zod.string().nullable(),
+  "reports": zod.array(zod.object({
+  "status": zod.enum(['completed', 'failed']),
+  "marketDate": zod.string().nullable(),
+  "asOf": zod.coerce.date(),
+  "answer": zod.string(),
+  "assessment": zod.record(zod.string(), zod.unknown()).optional(),
+  "error": zod.string().optional()
+})),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Pause or resume a stock research agent
+ */
+export const UpdateAccountStockResearchAgentParams = zod.object({
+  "agentId": zod.coerce.string()
+})
+
+export const UpdateAccountStockResearchAgentBody = zod.object({
+  "enabled": zod.boolean()
+})
+
+export const UpdateAccountStockResearchAgentResponse = zod.object({
+  "id": zod.string(),
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "mission": zod.string(),
+  "enabled": zod.boolean(),
+  "nextRunAt": zod.coerce.date(),
+  "lastRunAt": zod.coerce.date().nullable(),
+  "lastMarketDate": zod.string().nullable(),
+  "lastError": zod.string().nullable(),
+  "reports": zod.array(zod.object({
+  "status": zod.enum(['completed', 'failed']),
+  "marketDate": zod.string().nullable(),
+  "asOf": zod.coerce.date(),
+  "answer": zod.string(),
+  "assessment": zod.record(zod.string(), zod.unknown()).optional(),
+  "error": zod.string().optional()
+})),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Delete a stock research agent
+ */
+export const DeleteAccountStockResearchAgentParams = zod.object({
+  "agentId": zod.coerce.string()
+})
+
+export const DeleteAccountStockResearchAgentResponse = zod.void()
+
+
+/**
+ * @summary Queue an immediate stock research agent run
+ */
+export const RunAccountStockResearchAgentParams = zod.object({
+  "agentId": zod.coerce.string()
+})
+
+export const RunAccountStockResearchAgentResponse = zod.object({
+  "id": zod.string(),
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "mission": zod.string(),
+  "enabled": zod.boolean(),
+  "nextRunAt": zod.coerce.date(),
+  "lastRunAt": zod.coerce.date().nullable(),
+  "lastMarketDate": zod.string().nullable(),
+  "lastError": zod.string().nullable(),
+  "reports": zod.array(zod.object({
+  "status": zod.enum(['completed', 'failed']),
+  "marketDate": zod.string().nullable(),
+  "asOf": zod.coerce.date(),
+  "answer": zod.string(),
+  "assessment": zod.record(zod.string(), zod.unknown()).optional(),
+  "error": zod.string().optional()
+})),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
 })
 
 
@@ -787,7 +2061,8 @@ export const GetAccountLineNotificationsResponse = zod.object({
 })).max(getAccountLineNotificationsResponseAlertsMax),
   "openingNotice": zod.boolean(),
   "closingSummary": zod.boolean(),
-  "premarketSummary": zod.boolean()
+  "premarketSummary": zod.boolean(),
+  "quantSignalAlerts": zod.boolean()
 })
 
 
@@ -816,7 +2091,8 @@ export const PutAccountLineNotificationsBody = zod.object({
 })).max(putAccountLineNotificationsBodyAlertsMax),
   "openingNotice": zod.boolean(),
   "closingSummary": zod.boolean(),
-  "premarketSummary": zod.boolean()
+  "premarketSummary": zod.boolean(),
+  "quantSignalAlerts": zod.boolean()
 })
 
 export const putAccountLineNotificationsResponseAlertsItemIdMax = 64;
@@ -842,7 +2118,8 @@ export const PutAccountLineNotificationsResponse = zod.object({
 })).max(putAccountLineNotificationsResponseAlertsMax),
   "openingNotice": zod.boolean(),
   "closingSummary": zod.boolean(),
-  "premarketSummary": zod.boolean()
+  "premarketSummary": zod.boolean(),
+  "quantSignalAlerts": zod.boolean()
 })
 
 
@@ -881,7 +2158,8 @@ export const DeleteAccountLineLinkResponse = zod.object({
 })).max(deleteAccountLineLinkResponseAlertsMax),
   "openingNotice": zod.boolean(),
   "closingSummary": zod.boolean(),
-  "premarketSummary": zod.boolean()
+  "premarketSummary": zod.boolean(),
+  "quantSignalAlerts": zod.boolean()
 })
 
 
@@ -903,13 +2181,22 @@ export const putAccountWatchlistBodyWatchlistItemNameMax = 60;
 
 export const putAccountWatchlistBodyWatchlistMax = 100;
 
+export const putAccountWatchlistBodyEtfHoldingsItemSymbolRegExp = new RegExp('^00[A-Z0-9]{2,4}$');
+export const putAccountWatchlistBodyEtfHoldingsItemSharesMax = 100000000;
+
+export const putAccountWatchlistBodyEtfHoldingsMax = 100;
+
 
 
 export const PutAccountWatchlistBody = zod.object({
   "watchlist": zod.array(zod.object({
   "symbol": zod.string().min(putAccountWatchlistBodyWatchlistItemSymbolMin).max(putAccountWatchlistBodyWatchlistItemSymbolMax).regex(putAccountWatchlistBodyWatchlistItemSymbolRegExp),
   "name": zod.string().min(1).max(putAccountWatchlistBodyWatchlistItemNameMax)
-})).max(putAccountWatchlistBodyWatchlistMax)
+})).max(putAccountWatchlistBodyWatchlistMax),
+  "etfHoldings": zod.array(zod.object({
+  "symbol": zod.string().regex(putAccountWatchlistBodyEtfHoldingsItemSymbolRegExp),
+  "shares": zod.number().int().min(1).max(putAccountWatchlistBodyEtfHoldingsItemSharesMax)
+})).max(putAccountWatchlistBodyEtfHoldingsMax).optional()
 })
 
 export const putAccountWatchlistResponseWatchlistItemSymbolMin = 2;
@@ -921,6 +2208,11 @@ export const putAccountWatchlistResponseWatchlistItemNameMax = 60;
 
 export const putAccountWatchlistResponseWatchlistMax = 100;
 
+export const putAccountWatchlistResponseEtfHoldingsItemSymbolRegExp = new RegExp('^00[A-Z0-9]{2,4}$');
+export const putAccountWatchlistResponseEtfHoldingsItemSharesMax = 100000000;
+
+export const putAccountWatchlistResponseEtfHoldingsMax = 100;
+
 
 
 export const PutAccountWatchlistResponse = zod.object({
@@ -931,6 +2223,10 @@ export const PutAccountWatchlistResponse = zod.object({
   "symbol": zod.string().min(putAccountWatchlistResponseWatchlistItemSymbolMin).max(putAccountWatchlistResponseWatchlistItemSymbolMax).regex(putAccountWatchlistResponseWatchlistItemSymbolRegExp),
   "name": zod.string().min(1).max(putAccountWatchlistResponseWatchlistItemNameMax)
 })).max(putAccountWatchlistResponseWatchlistMax),
+  "etfHoldings": zod.array(zod.object({
+  "symbol": zod.string().regex(putAccountWatchlistResponseEtfHoldingsItemSymbolRegExp),
+  "shares": zod.number().int().min(1).max(putAccountWatchlistResponseEtfHoldingsItemSharesMax)
+})).max(putAccountWatchlistResponseEtfHoldingsMax),
   "maxWatchlistItems": zod.number().int()
 })
 
@@ -971,7 +2267,7 @@ export const GetAccountStockAiConversationResponse = zod.object({
   "messages": zod.array(zod.object({
   "role": zod.enum(['user', 'assistant']),
   "content": zod.string().min(1).max(getAccountStockAiConversationResponseMessagesItemContentMax),
-  "aiProvider": zod.enum(['openai', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'gemini', 'rule_based']).optional(),
+  "aiProvider": zod.enum(['openai', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'gemini', 'nvidia_nim', 'rule_based']).optional(),
   "citedFacts": zod.array(zod.string().max(getAccountStockAiConversationResponseMessagesItemCitedFactsItemMax)).max(getAccountStockAiConversationResponseMessagesItemCitedFactsMax).optional(),
   "sources": zod.array(zod.object({
   "title": zod.string().min(1).max(getAccountStockAiConversationResponseMessagesItemSourcesItemTitleMax),
@@ -1024,7 +2320,7 @@ export const PutAccountStockAiConversationBody = zod.object({
   "messages": zod.array(zod.object({
   "role": zod.enum(['user', 'assistant']),
   "content": zod.string().min(1).max(putAccountStockAiConversationBodyMessagesItemContentMax),
-  "aiProvider": zod.enum(['openai', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'gemini', 'rule_based']).optional(),
+  "aiProvider": zod.enum(['openai', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'gemini', 'nvidia_nim', 'rule_based']).optional(),
   "citedFacts": zod.array(zod.string().max(putAccountStockAiConversationBodyMessagesItemCitedFactsItemMax)).max(putAccountStockAiConversationBodyMessagesItemCitedFactsMax).optional(),
   "sources": zod.array(zod.object({
   "title": zod.string().min(1).max(putAccountStockAiConversationBodyMessagesItemSourcesItemTitleMax),
@@ -1073,7 +2369,7 @@ export const PutAccountStockAiConversationResponse = zod.object({
   "messages": zod.array(zod.object({
   "role": zod.enum(['user', 'assistant']),
   "content": zod.string().min(1).max(putAccountStockAiConversationResponseMessagesItemContentMax),
-  "aiProvider": zod.enum(['openai', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'gemini', 'rule_based']).optional(),
+  "aiProvider": zod.enum(['openai', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'gemini', 'nvidia_nim', 'rule_based']).optional(),
   "citedFacts": zod.array(zod.string().max(putAccountStockAiConversationResponseMessagesItemCitedFactsItemMax)).max(putAccountStockAiConversationResponseMessagesItemCitedFactsMax).optional(),
   "sources": zod.array(zod.object({
   "title": zod.string().min(1).max(putAccountStockAiConversationResponseMessagesItemSourcesItemTitleMax),
@@ -1223,7 +2519,7 @@ export const PostAccountQuantResearchInterpretResponse = zod.object({
   "weekday": zod.union([zod.literal('monday'),zod.literal('tuesday'),zod.literal('wednesday'),zod.literal('thursday'),zod.literal('friday'),zod.literal(null)]).nullish()
 }).optional().describe('AI-parsed position sizing; omitted only for older saved runs.')
 }),
-  "aiProvider": zod.enum(['gemini', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'openai']).optional(),
+  "aiProvider": zod.enum(['gemini', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'openai', 'nvidia_nim']).optional(),
   "summary": zod.string().min(postAccountQuantResearchInterpretResponseSummaryMin).max(postAccountQuantResearchInterpretResponseSummaryMax)
 })
 
@@ -1338,7 +2634,7 @@ export const PostAccountQuantResearchBody = zod.object({
   "weekday": zod.union([zod.literal('monday'),zod.literal('tuesday'),zod.literal('wednesday'),zod.literal('thursday'),zod.literal('friday'),zod.literal(null)]).nullish()
 }).optional().describe('AI-parsed position sizing; omitted only for older saved runs.')
 }),
-  "aiProvider": zod.enum(['gemini', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'openai']).optional(),
+  "aiProvider": zod.enum(['gemini', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'openai', 'nvidia_nim']).optional(),
   "summary": zod.string().min(postAccountQuantResearchBodyInterpretationSummaryMin).max(postAccountQuantResearchBodyInterpretationSummaryMax)
 })
 })
@@ -1349,7 +2645,13 @@ export const postAccountQuantResearchResponseTickerFilterMax = 10;
 
 export const postAccountQuantResearchResponseTickerFilterRegExp = new RegExp('^[0-9]{4,6}(\\.(TW|TWO))?$');
 export const postAccountQuantResearchResponseTimingComparisonCalibrationCandidatesMin = 3;
-export const postAccountQuantResearchResponseTimingComparisonCalibrationCandidatesMax = 3;
+export const postAccountQuantResearchResponseTimingComparisonCalibrationCandidatesMax = 5;
+
+export const postAccountQuantResearchResponseWalkForwardFoldsMax = 3;
+
+export const postAccountQuantResearchResponseParameterStabilityGridMax = 15;
+
+export const postAccountQuantResearchResponseMonteCarloTerminalReturnBucketsMax = 8;
 
 export const postAccountQuantResearchResponseStrategyNameMax = 60;
 
@@ -1417,6 +2719,47 @@ export const PostAccountQuantResearchResponse = zod.object({
   "totalReturnPercent": zod.number(),
   "maxDrawdownPercent": zod.number()
 })
+}).optional(),
+  "walkForward": zod.object({
+  "folds": zod.array(zod.object({
+  "index": zod.number().int(),
+  "trainStartDate": zod.coerce.date(),
+  "trainEndDate": zod.coerce.date(),
+  "validationStartDate": zod.coerce.date(),
+  "validationEndDate": zod.coerce.date(),
+  "selectedThreshold": zod.number(),
+  "closedTradeCount": zod.number().int(),
+  "winRatePercent": zod.number().nullable(),
+  "totalReturnPercent": zod.number(),
+  "maxDrawdownPercent": zod.number()
+})).min(1).max(postAccountQuantResearchResponseWalkForwardFoldsMax)
+}).optional(),
+  "parameterStability": zod.object({
+  "calibrationStartDate": zod.coerce.date(),
+  "calibrationEndDate": zod.coerce.date(),
+  "thresholdFactor": zod.string(),
+  "grid": zod.array(zod.object({
+  "threshold": zod.number(),
+  "rebalance": zod.enum(['daily', 'weekly', 'monthly']),
+  "closedTradeCount": zod.number().int(),
+  "winRatePercent": zod.number().nullable(),
+  "totalReturnPercent": zod.number(),
+  "maxDrawdownPercent": zod.number()
+})).min(1).max(postAccountQuantResearchResponseParameterStabilityGridMax)
+}).optional(),
+  "monteCarlo": zod.object({
+  "method": zod.string(),
+  "simulationCount": zod.number().int(),
+  "sampledSessions": zod.number().int(),
+  "probabilityOfLossPercent": zod.number().nullable(),
+  "terminalReturnP05Percent": zod.number().nullable(),
+  "terminalReturnMedianPercent": zod.number().nullable(),
+  "terminalReturnP95Percent": zod.number().nullable(),
+  "maxDrawdownP95Percent": zod.number().nullable(),
+  "terminalReturnBuckets": zod.array(zod.object({
+  "range": zod.string(),
+  "count": zod.number().int()
+})).max(postAccountQuantResearchResponseMonteCarloTerminalReturnBucketsMax)
 }).optional(),
   "costStress": zod.object({
   "slippagePercentPerSide": zod.number(),
@@ -1510,7 +2853,7 @@ export const PostAccountQuantResearchResponse = zod.object({
   "dataFingerprint": zod.string(),
   "source": zod.string()
 }),
-  "aiProvider": zod.enum(['gemini', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter']),
+  "aiProvider": zod.enum(['gemini', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'nvidia_nim']),
   "createdAt": zod.coerce.date(),
   "disclaimer": zod.string().max(postAccountQuantResearchResponseDisclaimerMax)
 })
@@ -1626,7 +2969,7 @@ export const PostAccountQuantResearchStreamBody = zod.object({
   "weekday": zod.union([zod.literal('monday'),zod.literal('tuesday'),zod.literal('wednesday'),zod.literal('thursday'),zod.literal('friday'),zod.literal(null)]).nullish()
 }).optional().describe('AI-parsed position sizing; omitted only for older saved runs.')
 }),
-  "aiProvider": zod.enum(['gemini', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'openai']).optional(),
+  "aiProvider": zod.enum(['gemini', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'openai', 'nvidia_nim']).optional(),
   "summary": zod.string().min(postAccountQuantResearchStreamBodyInterpretationSummaryMin).max(postAccountQuantResearchStreamBodyInterpretationSummaryMax)
 })
 })
@@ -1675,7 +3018,13 @@ export const getAccountQuantResearchRunResponseTickerFilterMax = 10;
 
 export const getAccountQuantResearchRunResponseTickerFilterRegExp = new RegExp('^[0-9]{4,6}(\\.(TW|TWO))?$');
 export const getAccountQuantResearchRunResponseTimingComparisonCalibrationCandidatesMin = 3;
-export const getAccountQuantResearchRunResponseTimingComparisonCalibrationCandidatesMax = 3;
+export const getAccountQuantResearchRunResponseTimingComparisonCalibrationCandidatesMax = 5;
+
+export const getAccountQuantResearchRunResponseWalkForwardFoldsMax = 3;
+
+export const getAccountQuantResearchRunResponseParameterStabilityGridMax = 15;
+
+export const getAccountQuantResearchRunResponseMonteCarloTerminalReturnBucketsMax = 8;
 
 export const getAccountQuantResearchRunResponseStrategyNameMax = 60;
 
@@ -1743,6 +3092,47 @@ export const GetAccountQuantResearchRunResponse = zod.object({
   "totalReturnPercent": zod.number(),
   "maxDrawdownPercent": zod.number()
 })
+}).optional(),
+  "walkForward": zod.object({
+  "folds": zod.array(zod.object({
+  "index": zod.number().int(),
+  "trainStartDate": zod.coerce.date(),
+  "trainEndDate": zod.coerce.date(),
+  "validationStartDate": zod.coerce.date(),
+  "validationEndDate": zod.coerce.date(),
+  "selectedThreshold": zod.number(),
+  "closedTradeCount": zod.number().int(),
+  "winRatePercent": zod.number().nullable(),
+  "totalReturnPercent": zod.number(),
+  "maxDrawdownPercent": zod.number()
+})).min(1).max(getAccountQuantResearchRunResponseWalkForwardFoldsMax)
+}).optional(),
+  "parameterStability": zod.object({
+  "calibrationStartDate": zod.coerce.date(),
+  "calibrationEndDate": zod.coerce.date(),
+  "thresholdFactor": zod.string(),
+  "grid": zod.array(zod.object({
+  "threshold": zod.number(),
+  "rebalance": zod.enum(['daily', 'weekly', 'monthly']),
+  "closedTradeCount": zod.number().int(),
+  "winRatePercent": zod.number().nullable(),
+  "totalReturnPercent": zod.number(),
+  "maxDrawdownPercent": zod.number()
+})).min(1).max(getAccountQuantResearchRunResponseParameterStabilityGridMax)
+}).optional(),
+  "monteCarlo": zod.object({
+  "method": zod.string(),
+  "simulationCount": zod.number().int(),
+  "sampledSessions": zod.number().int(),
+  "probabilityOfLossPercent": zod.number().nullable(),
+  "terminalReturnP05Percent": zod.number().nullable(),
+  "terminalReturnMedianPercent": zod.number().nullable(),
+  "terminalReturnP95Percent": zod.number().nullable(),
+  "maxDrawdownP95Percent": zod.number().nullable(),
+  "terminalReturnBuckets": zod.array(zod.object({
+  "range": zod.string(),
+  "count": zod.number().int()
+})).max(getAccountQuantResearchRunResponseMonteCarloTerminalReturnBucketsMax)
 }).optional(),
   "costStress": zod.object({
   "slippagePercentPerSide": zod.number(),
@@ -1836,7 +3226,7 @@ export const GetAccountQuantResearchRunResponse = zod.object({
   "dataFingerprint": zod.string(),
   "source": zod.string()
 }),
-  "aiProvider": zod.enum(['gemini', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter']),
+  "aiProvider": zod.enum(['gemini', '1min_ai', 'agnes_ai', 'groq', 'ollama', 'openrouter', 'nvidia_nim']),
   "createdAt": zod.coerce.date(),
   "disclaimer": zod.string().max(getAccountQuantResearchRunResponseDisclaimerMax)
 })
@@ -2102,7 +3492,7 @@ export const postAdminWebSearchDiagnosticResponseHttpStatusMax = 599;
 
 
 export const PostAdminWebSearchDiagnosticResponse = zod.object({
-  "provider": zod.enum(['google_news_rss', 'duckduckgo', 'brave', 'searxng']),
+  "provider": zod.enum(['duckduckgo', 'brave', 'searxng', 'google_news_rss']),
   "outcome": zod.enum(['searched', 'empty', 'failed']),
   "resultCount": zod.number().int().min(postAdminWebSearchDiagnosticResponseResultCountMin),
   "failureKind": zod.union([zod.literal('configuration_error'),zod.literal('http_error'),zod.literal('timeout'),zod.literal('network_error'),zod.literal(null)]).nullable(),

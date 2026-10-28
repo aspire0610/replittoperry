@@ -12,6 +12,11 @@ import {
   QUANT_RESEARCH_GEMINI_MODELS,
   QUANT_RESEARCH_GROQ_MODEL,
 } from "./quant-research-ai-providers.ts";
+import {
+  acquireProviderSlot,
+  releaseProviderSlot,
+  resetProviderCoordinationForTests,
+} from "./ai-provider-coordination.ts";
 
 const providerEnvKeys = [
   "ONEMIN_API_KEY",
@@ -24,6 +29,8 @@ const providerEnvKeys = [
   "OPENROUTER_API_KEY",
   "OPENROUTER_MODEL",
   "GEMINI_API_KEY",
+  "NVIDIA_NIM_API_KEY",
+  "AI_PROVIDER_COORDINATION_MODE",
 ];
 
 function saveProviderEnv() {
@@ -33,8 +40,11 @@ function saveProviderEnv() {
 }
 
 function configureTestProviders() {
+  resetProviderCoordinationForTests();
   for (const key of providerEnvKeys) delete process.env[key];
+  process.env.AI_PROVIDER_COORDINATION_MODE = "memory";
   process.env.GEMINI_API_KEY = "test-gemini-key";
+  process.env.NVIDIA_NIM_API_KEY = "test-nvidia-nim-key";
   process.env.ONEMIN_API_KEY = "test-onemin-key";
   process.env.OPENROUTER_API_KEY = "test-openrouter-key";
   process.env.AGNES_AI_API_KEY = "test-agnes-key";
@@ -68,11 +78,28 @@ function makeRequest(operation, overrides = {}) {
   };
 }
 
-test("grants the market summary a longer but bounded provider fallback window", () => {
-  assert.equal(resolveAiProviderFallbackBudgetMs("market_ai_daily_summary", 24_000), 24_000);
-  assert.equal(resolveAiProviderFallbackBudgetMs("market_ai_daily_summary", 60_000), 24_000);
-  assert.equal(resolveAiProviderFallbackBudgetMs("quant_research_summary", 60_000), 16_000);
-  assert.equal(resolveAiProviderFallbackBudgetMs("ai-fallback-test-generic", 60_000), 12_000);
+test("grants market summaries a longer but bounded AI fallback window", () => {
+  assert.equal(resolveAiProviderFallbackBudgetMs({
+    operation: "market_ai_daily_summary",
+    maxFallbackDurationMs: 24_000,
+  }), 24_000);
+  assert.equal(resolveAiProviderFallbackBudgetMs({
+    operation: "market_ai_daily_summary",
+    maxFallbackDurationMs: 60_000,
+  }), 24_000);
+  assert.equal(resolveAiProviderFallbackBudgetMs({
+    operation: "ai-fallback-test-generic",
+    maxFallbackDurationMs: 60_000,
+  }), 12_000);
+  assert.equal(resolveAiProviderFallbackBudgetMs({
+    operation: "quant_research_summary",
+    maxFallbackDurationMs: 60_000,
+  }), 16_000);
+  assert.equal(resolveAiProviderFallbackBudgetMs({
+    operation: "stock_research_agent",
+    requestId: "stock-research-agent:scheduled",
+    maxFallbackDurationMs: 5_000,
+  }), 24_000);
 });
 
 function chatResponse(content, status = 200) {
@@ -82,16 +109,29 @@ function chatResponse(content, status = 200) {
   );
 }
 
+function oneMinResponse(content, status = 200) {
+  return new Response(
+    JSON.stringify({
+      aiRecord: {
+        status: status < 400 ? "SUCCESS" : "FAILED",
+        aiRecordDetail: { resultObject: content ? [content] : [] },
+      },
+    }),
+    { status, headers: { "content-type": "application/json" } },
+  );
+}
+
 async function readFetchRequest(input, init) {
   const request = new Request(input, init);
   return {
     url: request.url,
     body: await request.clone().json(),
+    headers: Object.fromEntries(request.headers.entries()),
     signal: request.signal,
   };
 }
 
-test("prioritizes Gemini Flash-Lite through the Google OpenAI-compatible API", async () => {
+test("prioritizes free Groq for the shared provider route", async () => {
   const savedEnv = saveProviderEnv();
   const originalFetch = globalThis.fetch;
   configureTestProviders();
@@ -108,19 +148,16 @@ test("prioritizes Gemini Flash-Lite through the Google OpenAI-compatible API", a
 
   try {
     const result = await withAiProviderFallback(
-      makeRequest("ai-fallback-test-gemini-primary", {
+      makeRequest("ai-fallback-test-groq-primary", {
         validateOutput: (text) => text === '{"ok":true}',
       }),
     );
 
     assert.equal(calls.length, 1);
-    assert.match(
-      calls[0].url,
-      /generativelanguage\.googleapis\.com\/v1beta\/openai\/chat\/completions$/,
-    );
-    assert.equal(calls[0].body.model, "gemini-3.5-flash-lite");
+    assert.match(calls[0].url, /api\.groq\.com\/openai\/v1\/chat\/completions$/);
+    assert.equal(calls[0].body.model, "openai/gpt-oss-20b");
     assert.equal(calls[0].body.temperature, 0.2);
-    assert.equal(result.provider, "gemini");
+    assert.equal(result.provider, "groq");
     assert.equal(result.text, '{"ok":true}');
   } finally {
     globalThis.fetch = originalFetch;
@@ -128,7 +165,7 @@ test("prioritizes Gemini Flash-Lite through the Google OpenAI-compatible API", a
   }
 });
 
-test("tries OpenRouter, Groq, Agnes AI, and Ollama before 1min.ai", async () => {
+test("shared provider route tries Gemini then OpenRouter after Groq fails", async () => {
   const savedEnv = saveProviderEnv();
   const originalFetch = globalThis.fetch;
   configureTestProviders();
@@ -137,12 +174,10 @@ test("tries OpenRouter, Groq, Agnes AI, and Ollama before 1min.ai", async () => 
   globalThis.fetch = async (input, init) => {
     const { url: requestUrl, body } = await readFetchRequest(input, init);
     calls.push({ url: requestUrl, body });
-    if (requestUrl.includes("generativelanguage.googleapis.com")) return chatResponse("", 503);
-    if (requestUrl.includes("openrouter.ai")) return chatResponse("", 503);
     if (requestUrl.includes("api.groq.com")) return chatResponse("", 503);
-    if (requestUrl.includes("agnes.test")) return chatResponse("", 502);
-    if (requestUrl.includes("ollama.com")) return chatResponse("", 503);
-    return chatResponse('{"ok":true}');
+    if (requestUrl.includes("generativelanguage.googleapis.com")) return chatResponse("", 503);
+    if (requestUrl.includes("openrouter.ai")) return chatResponse('{"ok":true}');
+    throw new Error(`Unexpected provider URL: ${requestUrl}`);
   };
 
   try {
@@ -151,27 +186,18 @@ test("tries OpenRouter, Groq, Agnes AI, and Ollama before 1min.ai", async () => 
     }));
     assert.deepEqual(
       calls.map(({ url }) =>
-        url.includes("generativelanguage.googleapis.com")
-          ? "gemini"
-          : url.includes("openrouter.ai")
-            ? "openrouter"
-            : url.includes("api.groq.com")
-              ? "groq"
-              : url.includes("agnes.test")
-                ? "agnes_ai"
-                : url.includes("ollama.com")
-                  ? "ollama"
-                  : "1min_ai",
+        url.includes("api.groq.com")
+          ? "groq"
+          : url.includes("generativelanguage.googleapis.com")
+            ? "gemini"
+            : "openrouter",
       ),
-      ["gemini", "openrouter", "groq", "agnes_ai", "ollama", "1min_ai"],
+      ["groq", "gemini", "openrouter"],
     );
-    assert.equal(calls[0].body.model, "gemini-3.5-flash-lite");
-    assert.equal(
-      calls[1].body.model,
-      "nvidia/nemotron-3-ultra-550b-a55b:free",
-    );
-    assert.equal(calls[5].body.model, "qwen3-8b");
-    assert.equal(result.provider, "1min_ai");
+    assert.equal(calls[0].body.model, "openai/gpt-oss-20b");
+    assert.equal(calls[1].body.model, "gemini-3.5-flash-lite");
+    assert.equal(calls[2].body.model, "nvidia/nemotron-3-ultra-550b-a55b:free");
+    assert.equal(result.provider, "openrouter");
     assert.equal(result.text, '{"ok":true}');
   } finally {
     globalThis.fetch = originalFetch;
@@ -179,7 +205,36 @@ test("tries OpenRouter, Groq, Agnes AI, and Ollama before 1min.ai", async () => 
   }
 });
 
-test("quant research tries Groq as the second fallback after 1min.ai", async () => {
+test("sends JSON requests to NVIDIA NIM using its OpenAI-compatible endpoint", async () => {
+  const savedEnv = saveProviderEnv();
+  const originalFetch = globalThis.fetch;
+  for (const key of providerEnvKeys) delete process.env[key];
+  process.env.NVIDIA_NIM_API_KEY = "test-nvidia-nim-key";
+  let sent;
+  globalThis.fetch = async (input, init) => {
+    sent = await readFetchRequest(input, init);
+    return chatResponse('{"ok":true}');
+  };
+
+  try {
+    const result = await withAiProviderFallback(makeRequest("ai-fallback-test-nvidia", {
+      allowedProviders: ["nvidia_nim"],
+      validateOutput: (text) => text === '{"ok":true}',
+    }));
+    assert.equal(sent.url, "https://integrate.api.nvidia.com/v1/chat/completions");
+    assert.equal(sent.body.model, "google/gemma-4-31b-it");
+    assert.equal(sent.body.response_format.type, "json_object");
+    assert.equal(sent.body.max_tokens, 64);
+    assert.equal(sent.body.temperature, 0.2);
+    assert.equal(result.provider, "nvidia_nim");
+    assert.equal(result.text, '{"ok":true}');
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreProviderEnv(savedEnv);
+  }
+});
+
+test("quant research uses free Groq first and Gemini as its fast fallback", async () => {
   const savedEnv = saveProviderEnv();
   const originalFetch = globalThis.fetch;
   configureTestProviders();
@@ -189,16 +244,13 @@ test("quant research tries Groq as the second fallback after 1min.ai", async () 
     const { url, body } = await readFetchRequest(input, init);
     calls.push({ url, body });
     if (url.includes("generativelanguage.googleapis.com")) {
-      if (body.model === "gemini-3.5-flash-lite") return chatResponse("", 503);
+      if (body.model === "gemini-3.5-flash-lite") return chatResponse('{"ok":true}');
       if (body.model === "gemini-3.8-flash") return chatResponse("", 503);
       throw new Error(`Unexpected Gemini model: ${body.model}`);
     }
-    if (url.includes("1min.ai") || url.includes("agnes.test")) {
-      return chatResponse("", 503);
-    }
+    if (url.includes("1min.ai")) return oneMinResponse("", 503);
     if (url.includes("api.groq.com")) return chatResponse("", 503);
-    if (url.includes("ollama.com")) return chatResponse('{"ok":true}');
-    throw new Error(`Unexpected provider URL: ${url}`);
+    throw new Error(`Unexpected provider URL: ${request.url}`);
   };
 
   try {
@@ -214,28 +266,20 @@ test("quant research tries Groq as the second fallback after 1min.ai", async () 
       calls.map(({ url }) =>
         url.includes("generativelanguage.googleapis.com")
           ? "gemini"
-          : url.includes("1min.ai")
-            ? "1min_ai"
-            : url.includes("api.groq.com")
-              ? "groq"
-              : url.includes("agnes.test")
-                ? "agnes_ai"
-                : "ollama",
+          : "groq",
       ),
-      ["gemini", "gemini", "1min_ai", "groq", "agnes_ai", "ollama"],
+      ["groq", "gemini"],
     );
-    assert.equal(calls[0].body.model, "gemini-3.5-flash-lite");
-    assert.equal(calls[1].body.model, "gemini-3.8-flash");
-    assert.equal(calls[2].body.model, "qwen3-8b");
-    assert.equal(calls[3].body.model, QUANT_RESEARCH_GROQ_MODEL);
-    assert.equal(result.provider, "ollama");
+    assert.equal(calls[0].body.model, QUANT_RESEARCH_GROQ_MODEL);
+    assert.equal(calls[1].body.model, "gemini-3.5-flash-lite");
+    assert.equal(result.provider, "gemini");
   } finally {
     globalThis.fetch = originalFetch;
     restoreProviderEnv(savedEnv);
   }
 });
 
-test("quant research accepts free Gemini Flash when Flash-Lite is unavailable", async () => {
+test("quant research reaches Gemini Flash after Groq and Flash-Lite fail", async () => {
   const savedEnv = saveProviderEnv();
   const originalFetch = globalThis.fetch;
   configureTestProviders();
@@ -244,9 +288,8 @@ test("quant research accepts free Gemini Flash when Flash-Lite is unavailable", 
   globalThis.fetch = async (input, init) => {
     const { url, body } = await readFetchRequest(input, init);
     calls.push({ url, body });
-    if (!url.includes("generativelanguage.googleapis.com")) {
-      throw new Error(`Unexpected backup provider call: ${url}`);
-    }
+    if (url.includes("api.groq.com")) return chatResponse("", 503);
+    if (!url.includes("generativelanguage.googleapis.com")) throw new Error(`Unexpected backup provider call: ${url}`);
     return body.model === "gemini-3.5-flash-lite"
       ? chatResponse("", 503)
       : chatResponse('{"ok":true}');
@@ -263,7 +306,7 @@ test("quant research accepts free Gemini Flash when Flash-Lite is unavailable", 
 
     assert.deepEqual(
       calls.map(({ body }) => body.model),
-      ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
+      [QUANT_RESEARCH_GROQ_MODEL, "gemini-3.5-flash-lite", "gemini-3.8-flash"],
     );
     assert.equal(result.provider, "gemini");
     assert.equal(result.text, '{"ok":true}');
@@ -273,7 +316,7 @@ test("quant research accepts free Gemini Flash when Flash-Lite is unavailable", 
   }
 });
 
-test("quant research can complete with Groq Free after earlier providers fail", async () => {
+test("quant research completes on Groq Free without trying a slower backup", async () => {
   const savedEnv = saveProviderEnv();
   const originalFetch = globalThis.fetch;
   configureTestProviders();
@@ -282,14 +325,8 @@ test("quant research can complete with Groq Free after earlier providers fail", 
   globalThis.fetch = async (input, init) => {
     const { url, body } = await readFetchRequest(input, init);
     calls.push({ url, body });
-    if (url.includes("generativelanguage.googleapis.com")) {
-      return chatResponse("", 503);
-    }
-    if (url.includes("1min.ai") || url.includes("agnes.test")) {
-      return chatResponse("", 503);
-    }
     if (url.includes("api.groq.com")) return chatResponse('{"ok":true}');
-    throw new Error(`Unexpected later provider call: ${url}`);
+    throw new Error(`Unexpected backup provider call: ${url}`);
   };
 
   try {
@@ -303,6 +340,7 @@ test("quant research can complete with Groq Free after earlier providers fail", 
       }),
     );
 
+    assert.deepEqual(calls.map(({ body }) => body.model), [QUANT_RESEARCH_GROQ_MODEL]);
     assert.equal(calls.at(-1).body.model, QUANT_RESEARCH_GROQ_MODEL);
     assert.equal(calls.at(-1).body.max_tokens, 512);
     assert.equal(
@@ -317,37 +355,33 @@ test("quant research can complete with Groq Free after earlier providers fail", 
   }
 });
 
-test("skips 1min.ai for stock operations and falls back to OpenRouter directly", async () => {
+test("keeps 1min.ai available for non-stock features that explicitly use it", async () => {
   const savedEnv = saveProviderEnv();
   const originalFetch = globalThis.fetch;
   configureTestProviders();
   const calls = [];
   globalThis.fetch = async (input, init) => {
-    const { url } = await readFetchRequest(input, init);
-    calls.push(url);
-    return url.includes("generativelanguage.googleapis.com")
-      ? chatResponse("", 503)
-      : chatResponse('{"ok":true}');
+    const request = await readFetchRequest(input, init);
+    calls.push(request);
+    if (request.url.includes("1min.ai")) return oneMinResponse('{"ok":true}');
+    throw new Error(`Unexpected provider URL: ${url}`);
   };
 
   try {
     const result = await withAiProviderFallback(
-      makeRequest("stock_assessment", {
+      makeRequest("assistant_chat", {
+        allowedProviders: ["1min_ai", "gemini", "nvidia_nim"],
         validateOutput: (text) => text === '{"ok":true}',
       }),
     );
 
-    assert.deepEqual(
-      calls.map((url) =>
-        url.includes("generativelanguage.googleapis.com")
-          ? "gemini"
-          : url.includes("openrouter.ai")
-            ? "openrouter"
-            : "unexpected",
-      ),
-      ["gemini", "openrouter"],
-    );
-    assert.equal(result.provider, "openrouter");
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, "https://api.1min.ai/api/chat-with-ai");
+    assert.equal(calls[0].headers["api-key"], "test-onemin-key");
+    assert.equal(calls[0].body.model, "qwen3.7-flash");
+    assert.match(calls[0].body.promptObject.prompt, /Return a JSON object/);
+    assert.equal(result.provider, "1min_ai");
+    assert.equal(result.text, '{"ok":true}');
   } finally {
     globalThis.fetch = originalFetch;
     restoreProviderEnv(savedEnv);
@@ -598,6 +632,7 @@ test("reports mixed provider failures and respects per-provider cooldowns", asyn
   configureTestProviders();
   const attempts = {
     gemini: 0,
+    nvidiaNim: 0,
     oneMin: 0,
     openrouter: 0,
     groq: 0,
@@ -610,9 +645,13 @@ test("reports mixed provider failures and respects per-provider cooldowns", asyn
       attempts.gemini += 1;
       return chatResponse("", 429);
     }
+    if (url.includes("integrate.api.nvidia.com")) {
+      attempts.nvidiaNim += 1;
+      return chatResponse("", 429);
+    }
     if (url.includes("1min.ai")) {
       attempts.oneMin += 1;
-      return chatResponse("", 429);
+      return oneMinResponse("", 429);
     }
     if (url.includes("openrouter.ai")) {
       attempts.openrouter += 1;
@@ -620,7 +659,7 @@ test("reports mixed provider failures and respects per-provider cooldowns", asyn
     }
     if (url.includes("api.groq.com")) {
       attempts.groq += 1;
-      return chatResponse("", 429);
+      return chatResponse("", attempts.groq === 1 ? 503 : 429);
     }
     if (url.includes("agnes.test")) {
       attempts.agnes += 1;
@@ -639,11 +678,12 @@ test("reports mixed provider failures and respects per-provider cooldowns", asyn
 
     assert.deepEqual(attempts, {
       gemini: 1,
-      oneMin: 1,
+      nvidiaNim: 0,
+      oneMin: 0,
       openrouter: 1,
       groq: 1,
-      agnes: 1,
-      ollama: 1,
+      agnes: 0,
+      ollama: 0,
     });
 
     await assert.rejects(
@@ -653,15 +693,17 @@ test("reports mixed provider failures and respects per-provider cooldowns", asyn
     );
     assert.deepEqual(attempts, {
       gemini: 1,
-      oneMin: 1,
+      nvidiaNim: 0,
+      oneMin: 0,
       openrouter: 1,
       groq: 1,
-      agnes: 1,
-      ollama: 1,
+      agnes: 0,
+      ollama: 0,
     });
 
     delete process.env.AGNES_AI_API_KEY;
     delete process.env.OLLAMA_API_KEY;
+    resetProviderCoordinationForTests();
     await assert.rejects(
       withAiProviderFallback(makeRequest("ai-fallback-test-only-rate-limit")),
       (error) =>
@@ -669,9 +711,58 @@ test("reports mixed provider failures and respects per-provider cooldowns", asyn
     );
     assert.equal(attempts.gemini, 2);
     assert.equal(attempts.openrouter, 2);
-    assert.equal(attempts.oneMin, 2);
+    assert.equal(attempts.groq, 2);
   } finally {
     globalThis.fetch = originalFetch;
     restoreProviderEnv(savedEnv);
+  }
+});
+
+test("shares provider cooldown across different AI operations", async () => {
+  const savedEnv = saveProviderEnv();
+  const originalFetch = globalThis.fetch;
+  configureTestProviders();
+  let attempts = 0;
+  globalThis.fetch = async () => {
+    attempts += 1;
+    return chatResponse("", 429);
+  };
+
+  try {
+    await assert.rejects(
+      withAiProviderFallback(
+        makeRequest("ai-fallback-stock-test", { allowedProviders: ["groq"] }),
+      ),
+      (error) =>
+        error instanceof AiProviderFallbackError && error.status === 429,
+    );
+    await assert.rejects(
+      withAiProviderFallback(
+        makeRequest("ai-fallback-chat-test", { allowedProviders: ["groq"] }),
+      ),
+      (error) =>
+        error instanceof AiProviderFallbackError && error.status === 429,
+    );
+    assert.equal(attempts, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreProviderEnv(savedEnv);
+  }
+});
+
+test("caps simultaneous requests to the same provider", async () => {
+  configureTestProviders();
+  const first = await acquireProviderSlot("groq", 2, 30_000);
+  const second = await acquireProviderSlot("groq", 2, 30_000);
+  const third = await acquireProviderSlot("groq", 2, 30_000);
+  assert.equal(first.state, "acquired");
+  assert.equal(second.state, "acquired");
+  assert.deepEqual(third, { state: "busy" });
+  if (first.state === "acquired") await releaseProviderSlot(first.lease);
+  const afterRelease = await acquireProviderSlot("groq", 2, 30_000);
+  assert.equal(afterRelease.state, "acquired");
+  if (second.state === "acquired") await releaseProviderSlot(second.lease);
+  if (afterRelease.state === "acquired") {
+    await releaseProviderSlot(afterRelease.lease);
   }
 });

@@ -8,6 +8,7 @@
     "build": "vite build --config vite.config.ts",
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "test:budget-sizing": "node --experimental-strip-types --test src/lib/budget-sizing.test.mjs",
+    "test:market-summary-window": "node --experimental-strip-types --test src/lib/market-summary-window.test.mjs",
     "test:stock-quote-display": "node --experimental-strip-types --test src/lib/stock-quote-display.test.mjs",
     "test:quant-stream": "node --experimental-strip-types --test src/lib/quant-research-stream.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"

@@ -3,6 +3,7 @@ import { clerkClient, type User } from "@clerk/express";
 import { timingSafeEqual } from "node:crypto";
 import { getTaiexSummary } from "../lib/market-data.js";
 import { getMarketAiDailySummary } from "../lib/market-ai-daily-summary.js";
+import { formatLineAssistantReply } from "../lib/line-assistant-format.js";
 
 const router: IRouter = Router();
 const APP_METADATA_KEY = "twStockDashboard";
@@ -54,7 +55,10 @@ function cronAuthorized(authorization: string | undefined): boolean {
   return received.length === expected.length && timingSafeEqual(received, expected);
 }
 
-async function pushText(userId: string, text: string): Promise<void> {
+async function pushText(
+  userId: string,
+  message: string | ReturnType<typeof formatLineAssistantReply>,
+): Promise<void> {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN?.trim();
   if (!token) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is not configured");
   const response = await fetch("https://api.line.me/v2/bot/message/push", {
@@ -65,7 +69,11 @@ async function pushText(userId: string, text: string): Promise<void> {
     },
     body: JSON.stringify({
       to: userId,
-      messages: [{ type: "text", text: text.slice(0, 4900) }],
+      messages: [
+        typeof message === "string"
+          ? { type: "text", text: message.slice(0, 4900) }
+          : message,
+      ],
     }),
     signal: AbortSignal.timeout(10_000),
   });
@@ -120,15 +128,22 @@ router.get("/market/line-premarket-summary", async (req, res): Promise<void> => 
           hourCycle: "h23",
         }).format(summary.quoteAsOf)
       : "無";
-    const sourceLines = summary.newsSources.slice(0, 2)
-      .map((source) => `${source.title} ${source.url}`);
+    const indexSourceUrl = marketData.dailyCloseSource.includes("TWSE")
+      ? "https://www.twse.com.tw/indicesReport/MI_5MINS_HIST?response=html"
+      : "https://www.fugle.tw/market-data";
+    const sources = [
+      { title: `加權指數日線（${summary.marketDate}；${marketData.dailyCloseSource}）`, url: indexSourceUrl },
+      { title: "納斯達克綜合指數歷史行情", url: "https://www.nasdaq.com/market-activity/index/comp/historical" },
+      { title: "道瓊工業指數歷史行情", url: "https://finance.yahoo.com/quote/%5EDJI/history/" },
+      ...summary.newsSources.slice(0, 2),
+    ];
     const message = [
       `台股 AI 盤前摘要（${today}）`,
       summary.summary,
       `技術資料日：${summary.marketDate}；最新行情時間：${quoteTime}（台北時間）。`,
-      ...(sourceLines.length
-        ? [`消息線索（搜尋摘要未核實）：\n${sourceLines.join("\n")}`]
-        : ["目前沒有可提供的消息來源連結。"]),
+      summary.newsSources.length
+        ? "新聞僅為搜尋線索，尚未核實。"
+        : "目前沒有可核實的近期新聞線索。",
     ].join("\n\n");
 
     let sent = 0;
@@ -151,7 +166,13 @@ router.get("/market/line-premarket-summary", async (req, res): Promise<void> => 
         }
 
         try {
-          await pushText(settings.lineUserId, message);
+          await pushText(settings.lineUserId, formatLineAssistantReply({
+            answer: message,
+            sources,
+            searchStatus: summary.newsSources.length ? "searched" : "not_needed",
+            aiProvider: summary.aiProvider ?? "rule_based",
+            answeredAt: summary.analyzedAt ?? new Date(),
+          }));
           await saveLastSentDate(user, settings, today);
           sent += 1;
         } catch (error) {

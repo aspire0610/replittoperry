@@ -1,31 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link } from "wouter";
 import { useAuth } from "@clerk/react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getGetAccountPaperTradingQueryKey,
-  getGetAccountQuantResearchRunQueryKey,
-  getGetAccountQuantResearchRunsQueryKey,
-  postAccountQuantResearchInterpret,
-  useDeleteAccountQuantResearchRuns,
+  getGetStockAiAssessmentQueryKey,
   useGetAccountPaperTrading,
-  useGetAccountQuantResearchRun,
-  useGetAccountQuantResearchRuns,
+  useGetStockAiAssessment,
   usePostAccountPaperTrade,
   usePostAccountPaperTrading,
   usePostAccountPaperTradingReset,
-  usePostAccountQuantResearchRunSummary,
-  type QuantResearchInput,
-  type QuantResearchExecutionInput,
-  type QuantResearchInterpretation,
-  type QuantResearchResult,
+  type StockAiAssessment,
 } from "@workspace/api-client-react";
 import { useAccountWatchlist } from "../components/account-watchlist";
-import {
-  streamQuantResearch,
-  type QuantResearchProgressEvent,
-} from "../lib/quant-research-stream";
 import {
   Area,
   AreaChart,
@@ -37,7 +25,7 @@ import {
   YAxis,
 } from "recharts";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Activity, ArrowDown, ArrowUp, BarChart3, BookOpen, CircleAlert, Database, FlaskConical, LockKeyhole, RefreshCw, ShieldCheck, Sparkles, Wallet } from "lucide-react";
+import { Activity, ArrowDown, ArrowUp, Check, CircleAlert, Copy, Database, FlaskConical, LockKeyhole, RefreshCw, ShieldCheck, Sparkles, Wallet } from "lucide-react";
 
 const money = (n: number | null | undefined) =>
   n == null ? "—" : `NT$ ${Math.round(n).toLocaleString("zh-TW")}`;
@@ -45,6 +33,25 @@ const pct = (n: number | null | undefined) =>
   n == null ? "—" : `${n > 0 ? "+" : ""}${n.toFixed(2)}%`;
 const dateText = (value: string | null | undefined) =>
   value ? new Date(value).toLocaleDateString("zh-TW") : "—";
+const dateTimeText = (value: string | null | undefined) => {
+  if (!value) return "未提供";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : parsed.toLocaleString("zh-TW", {
+        timeZone: "Asia/Taipei",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+};
+const assessmentPrice = (value: number | null | undefined) =>
+  value == null || !Number.isFinite(value) ? "未提供" : value.toLocaleString("zh-TW", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const assessmentReferenceType = (value: StockAiAssessment["referenceType"]) =>
+  value === "verified_trade" ? "已驗證成交" : "官方日收盤";
 const apiError = (error: unknown, fallback: string) => {
   if (error && typeof error === "object" && "data" in error) {
     const data = (error as { data?: { error?: unknown } }).data;
@@ -52,35 +59,6 @@ const apiError = (error: unknown, fallback: string) => {
   }
   return fallback;
 };
-const researchErrorMessage = (error: unknown) => {
-  const apiMessage = apiError(error, "");
-  if (apiMessage) return apiMessage;
-  if (error instanceof Error && error.message) {
-    if (/failed to fetch|networkerror|load failed/i.test(error.message)) {
-      return "研究連線中斷；已成功取得的官方行情會保留，請再次執行。";
-    }
-    return error.message;
-  }
-  return "研究執行失敗，請稍後重試。";
-};
-const researchStageLabels: Record<
-  QuantResearchProgressEvent["stage"],
-  string
-> = {
-  strategy: "AI 策略設計",
-  "market-data": "官方行情載入",
-  backtest: "回測計算",
-  summary: "AI 摘要整理",
-  saving: "儲存研究紀錄",
-};
-
-type ResearchLogEntry = {
-  id: number;
-  time: string;
-  stage: string;
-  message: string;
-};
-
 type PaperAccountFormValues = { startingCash: number };
 type PaperTradeFormValues = {
   ticker: string;
@@ -89,45 +67,125 @@ type PaperTradeFormValues = {
   price: number | undefined;
 };
 
-const quantAiProviderLabels: Record<QuantResearchResult["aiProvider"], string> = {
-  gemini: "Gemini Flash-Lite",
-  "1min_ai": "1min.ai",
-  agnes_ai: "Agnes AI",
-  groq: "Groq Free",
-  ollama: "Ollama",
-  openrouter: "OpenRouter（舊紀錄）",
-};
+function StockAssessmentReport({
+  assessment,
+  copied,
+  onCopy,
+}: {
+  assessment: StockAiAssessment;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  const scores = assessment.scorecard;
+  const scenarios = assessment.tradeScenarios;
+  const scanTags = assessment.reportMarkdown
+    .split("## 1.")[0]
+    .split("\n")
+    .filter((line) => line.startsWith("* "))
+    .map((line) => line.replace(/^\* `|`$/g, ""));
+  const actionLabels: Record<StockAiAssessment["action"], string> = {
+    buy: "🔵 分批進場",
+    hold: "🟡 續抱觀望",
+    sell: "🟢 分批停利／減碼",
+    wait: "⚪ 區間觀望",
+    insufficient: "資料不足，暫不交易",
+  };
+  const scenarioRows = [
+    { label: "情境一：現價自動進場", scenario: scenarios.directEntry, id: "direct" },
+    { label: "情境二：回測支撐佈局", scenario: scenarios.pullbackEntry, id: "pullback" },
+  ];
+  const scenarioLevel = (price: number | null, percent: number | null, sign: "+" | "-") =>
+    price === null
+      ? "未取得"
+      : `${assessmentPrice(price)} 元${percent === null ? "" : `（${sign}${percent.toFixed(1)}%）`}`;
 
-type QuantSignalRule = NonNullable<
-  QuantResearchResult["strategy"]["entryRule"]
->;
-type QuantSignalCondition = QuantSignalRule["conditions"][number];
-
-const quantSignalFactorLabels: Record<
-  QuantSignalCondition["factor"],
-  string
-> = {
-  momentum20: "近 20 日漲跌幅",
-  momentum60: "近 60 日漲跌幅",
-  liquidity20: "近 20 日平均每日成交金額",
-  volatility20: "近 20 日價格起伏",
-};
-
-function formatQuantSignalCondition(
-  condition: QuantSignalCondition,
-): string {
-  const threshold =
-    condition.factor === "liquidity20"
-      ? money(condition.threshold)
-      : `${(condition.threshold * 100).toFixed(2)}%`;
-  return `${quantSignalFactorLabels[condition.factor]} ${
-    condition.operator === "gte" ? "≥" : "≤"
-  } ${threshold}`;
-}
-
-function formatQuantSignalRule(rule: QuantSignalRule): string {
-  const conjunction = rule.mode === "all" ? "且" : "或";
-  return rule.conditions.map(formatQuantSignalCondition).join(` ${conjunction} `);
+  return (
+    <article className="ql-assess-report" data-testid="result-stock-assessment">
+      <header className="ql-assess-title">
+        <div>
+          <span className="ql-index">CURRENT EVIDENCE / {assessment.ticker}</span>
+          <h3><span className="mono">{assessment.symbol}</span> 個股評估</h3>
+          <p>{assessment.actionText || assessment.action} · {assessment.horizon} · 分析時間 {dateTimeText(assessment.analyzedAt)}</p>
+        </div>
+        <button type="button" className="ql-assess-copy" onClick={onCopy} data-testid="button-copy-assessment-report">
+          {copied ? <Check size={13} /> : <Copy size={13} />}{copied ? "已複製 Markdown" : "複製 Markdown 報告"}
+        </button>
+      </header>
+      <section className="ql-scan-tags" data-testid="panel-automated-scan-tags">
+        <div className="ql-assess-section-head"><h4>0. 自動化掃描與亮點標籤</h4><small>只列有證據支持的標記</small></div>
+        <div>{scanTags.map((tag) => <span key={tag}>{tag}</span>)}</div>
+      </section>
+      <div className="ql-assess-provenance" data-testid="panel-assessment-provenance">
+        <div><span>參考價格</span><strong>{assessmentPrice(assessment.referencePrice)}</strong></div>
+        <div><span>參考價格類型</span><strong>{assessmentReferenceType(assessment.referenceType)}</strong></div>
+        <div><span>參考資料時間</span><strong>{dateTimeText(assessment.quoteAsOf)}</strong></div>
+        <div><span>資料來源</span><strong>{assessment.source || "未提供"}</strong></div>
+      </div>
+      <section className="ql-trade-snapshot" data-testid="panel-trading-simulation-summary">
+        <div><span>當前評估價</span><strong>{assessmentPrice(assessment.referencePrice)} 元</strong></div>
+        <div><span>量化綜合得分</span><strong>{scores.earnedPoints} / 100 分</strong><small>本次可評估 {scores.availablePoints} / 100 分；缺漏不補分</small></div>
+        <div><span>自動化決策訊號</span><strong>{actionLabels[assessment.action]}</strong><small>{assessmentReferenceType(assessment.referenceType)} · {dateTimeText(assessment.quoteAsOf)}</small></div>
+      </section>
+      <section className="ql-core-decision" data-testid="panel-core-trade-decision">
+        <div><span>建議處置</span><strong data-testid="text-trade-action">{actionLabels[assessment.action]}</strong></div>
+        <p data-testid="text-stock-assessment-summary">{assessment.summary}</p>
+        <small>{assessment.actionText}</small>
+      </section>
+      <section className="ql-assess-section" aria-labelledby="ql-assessment-score-title">
+        <div className="ql-assess-section-head">
+          <h4 id="ql-assessment-score-title">三大維度量化診斷</h4>
+          <small data-testid="text-assessment-score-total">{scores.earnedPoints} / {scores.maximumPoints} 分已得；本次可評估 {scores.availablePoints} / {scores.maximumPoints} 分</small>
+        </div>
+        <div className="ql-score-list" data-testid="list-assessment-scorecard">
+          {scores.items.map((item) => (
+            <div className="ql-score-item" key={item.id} data-testid={`item-assessment-score-${item.id}`}>
+              <div className="ql-score-item-head"><span>{item.label}</span><strong>{item.points == null ? `未取得 / ${item.maximumPoints}` : `${item.points} / ${item.maximumPoints}`}</strong></div>
+              {item.points != null && <div className="ql-score-track" aria-hidden="true"><span style={{ width: `${Math.max(0, Math.min(100, item.points / item.maximumPoints * 100))}%` }} /></div>}
+              <p>{item.points == null ? `未評分：${item.note}` : item.note}</p>
+            </div>
+          ))}
+        </div>
+        <p className="ql-assess-note" data-testid="text-assessment-score-note">{scores.note} 分數是診斷資訊，不是交易訊號；未提供項目保持未評分，不推估持股或融資數據。</p>
+      </section>
+      <section className="ql-assess-section" aria-labelledby="ql-assessment-scenarios-title">
+        <div className="ql-assess-section-head"><h4 id="ql-assessment-scenarios-title">智慧交易策略與部位試算</h4><small>依該次評估參考價試算</small></div>
+        <div className="ql-assess-provenance">
+          <div><span>情境參考價</span><strong>{assessmentPrice(scenarios.referencePrice)}</strong></div>
+          <div><span>20 日支撐</span><strong>{assessmentPrice(scenarios.supportPrice)}</strong></div>
+          <div><span>20 日壓力</span><strong>{assessmentPrice(scenarios.resistancePrice)}</strong></div>
+          <div><span>60 日深層支撐</span><strong>{assessmentPrice(scenarios.deepSupportPrice)}</strong></div>
+        </div>
+        <div className="ql-scenario-table-wrap">
+          <table className="ql-scenario-table">
+            <thead><tr><th>執行情境</th><th>建議進場價位</th><th>預估停利位</th><th>預估停損位（含 ATR 防守）</th><th>風險報酬比 (R/R)</th><th>建議建倉方式</th></tr></thead>
+            <tbody>
+              {scenarioRows.map(({ label, scenario, id }) => (
+                <tr key={id} data-testid={`panel-assessment-scenario-${id}`}>
+                  <th scope="row">{label}</th>
+                  <td>{assessmentPrice(scenario.entryPrice)}</td>
+                  <td>{scenarioLevel(scenario.targetPrice, scenario.profitPercent, "+")}</td>
+                  <td>{scenarioLevel(scenario.stopPrice, scenario.lossPercent, "-")}</td>
+                  <td>{scenario.rewardToRisk === null ? "無法計算" : `1 : ${scenario.rewardToRisk.toFixed(2)}`}</td>
+                  <td>未提供單筆風險預算，不估算金額或股數</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="ql-assess-note">同條件歷史勝率尚未驗證；不以其他策略回測數字替代。{assessment.pricePlanMessage}</p>
+        <p className="ql-assess-note" data-testid="text-assessment-scenario-method">{scenarios.methodNote}</p>
+      </section>
+      <section className="ql-action-plan" data-testid="panel-trade-action-plan">
+        <div className="ql-assess-section-head"><h4>自動化執行紀律與風控</h4><small>試算不會送出委託</small></div>
+        <p>{assessment.actionText}</p>
+        {assessment.pricePlanStatus === "available" && assessment.entryPrice !== null && assessment.stopLossPrice !== null && assessment.takeProfitPrice !== null && (
+          <p className="ql-action-levels">AI 價格參考：進場 {assessmentPrice(assessment.entryPrice)} 元 · 停損 {assessmentPrice(assessment.stopLossPrice)} 元 · 目標 {assessmentPrice(assessment.takeProfitPrice)} 元</p>
+        )}
+        <p className="ql-risk-note"><strong>⚠️ 風險提示：</strong>{assessment.risks[0] || assessment.disclaimer}</p>
+      </section>
+      <p className="ql-disclaimer" data-testid="text-assessment-disclaimer">{assessment.disclaimer}</p>
+    </article>
+  );
 }
 
 export default function QuantLabPage() {
@@ -137,114 +195,40 @@ export default function QuantLabPage() {
   const previousUserId = useRef<string | null>(userScope);
   const userScopeRef = useRef<string | null>(userScope);
   const queryClient = useQueryClient();
-  const [activeRunId, setActiveRunId] = useState<number | null>(null);
-  const [runFeedback, setRunFeedback] = useState("");
-  const [aiSummaryFeedback, setAiSummaryFeedback] = useState("");
   const [paperFeedback, setPaperFeedback] = useState("");
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
-  const [resetResearchRunsDialogOpen, setResetResearchRunsDialogOpen] = useState(false);
-  const [researchModalOpen, setResearchModalOpen] = useState(false);
-  const [interpretationDialogOpen, setInterpretationDialogOpen] = useState(false);
-  const [isInterpreting, setIsInterpreting] = useState(false);
-  const [researchInterpretation, setResearchInterpretation] =
-    useState<QuantResearchInterpretation | null>(null);
-  const [pendingResearchInput, setPendingResearchInput] =
-    useState<QuantResearchInput | null>(null);
-  const [researchLogs, setResearchLogs] = useState<ResearchLogEntry[]>([]);
-  const [researchStage, setResearchStage] =
-    useState<QuantResearchProgressEvent["stage"]>("strategy");
-  const [researchProgress, setResearchProgress] = useState<{
-    current: number;
-    total: number;
-  } | null>(null);
-  const [researchStartedAt, setResearchStartedAt] = useState<number | null>(
-    null,
-  );
-  const [researchElapsedSeconds, setResearchElapsedSeconds] = useState(0);
-  const researchLogSequence = useRef(0);
-  const researchLogRef = useRef<HTMLDivElement>(null);
-  const summaryRequestedRunId = useRef<number | null>(null);
-  const cacheScope = userScope ?? "signed-out";
-  const runsCacheKey = [...getGetAccountQuantResearchRunsQueryKey(), cacheScope] as const;
-  const paperCacheKey = [...getGetAccountPaperTradingQueryKey(), cacheScope] as const;
-  const selectedRunCacheKey = [
-    ...getGetAccountQuantResearchRunQueryKey(activeRunId ?? 0),
-    cacheScope,
+  const [assessmentInput, setAssessmentInput] = useState("");
+  const [assessmentSymbol, setAssessmentSymbol] = useState("");
+  const [assessmentRequested, setAssessmentRequested] = useState(false);
+  const [assessmentFeedback, setAssessmentFeedback] = useState("");
+  const [reportCopied, setReportCopied] = useState(false);
+  const paperCacheKey = [
+    ...getGetAccountPaperTradingQueryKey(),
+    userScope ?? "signed-out",
   ] as const;
-  const appendResearchLog = (stage: string, message: string) => {
-    const time = new Date().toLocaleTimeString("zh-TW", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-    const entry = {
-      id: ++researchLogSequence.current,
-      time,
-      stage,
-      message,
-    };
-    setResearchLogs((current) => [...current, entry].slice(-100));
-  };
-
-  const form = useForm<QuantResearchInput>({
-    defaultValues: {
-      hypothesis: "",
-      tickerFilter: "2330.TW",
-      rangeMonths: 6,
-      startingCapital: 1000000,
-      topN: 10,
-      rebalance: "monthly",
-    },
-  });
-  const tickerFilterValue = form.watch("tickerFilter")?.trim() ?? "";
   const initializeForm = useForm<PaperAccountFormValues>({
     defaultValues: { startingCash: 1_000_000 },
   });
   const tradeForm = useForm<PaperTradeFormValues>({
     defaultValues: { ticker: "", side: "buy", shares: 1000, price: undefined },
   });
+  const assessmentQuery = useGetStockAiAssessment(
+    { symbol: assessmentSymbol },
+    {
+      query: {
+        enabled: assessmentRequested && Boolean(assessmentSymbol),
+        queryKey: getGetStockAiAssessmentQueryKey({ symbol: assessmentSymbol }),
+        staleTime: 60_000,
+      },
+      request: { credentials: "include" },
+    },
+  );
 
-  const runs = useGetAccountQuantResearchRuns({
-    query: {
-      queryKey: runsCacheKey,
-      enabled: isSignedIn,
-    },
-    request: { credentials: "include" },
-  });
-  const selectedRun = useGetAccountQuantResearchRun(activeRunId ?? 0, {
-    query: {
-      queryKey: selectedRunCacheKey,
-      enabled: isSignedIn && Boolean(activeRunId),
-    },
-    request: { credentials: "include" },
-  });
   const portfolio = useGetAccountPaperTrading({
     query: {
       queryKey: paperCacheKey,
       enabled: isSignedIn,
     },
-    request: { credentials: "include" },
-  });
-  const researchMutation = useMutation({
-    mutationFn: ({ data }: { data: QuantResearchExecutionInput }) =>
-      streamQuantResearch(data, (event) => {
-        setResearchStage(event.stage);
-        if (
-          typeof event.current === "number" &&
-          typeof event.total === "number"
-        ) {
-          setResearchProgress({
-            current: event.current,
-            total: event.total,
-          });
-        }
-        appendResearchLog(researchStageLabels[event.stage], event.message);
-      }),
-  });
-  const summaryMutation = usePostAccountQuantResearchRunSummary({
-    request: { credentials: "include" },
-  });
-  const resetResearchRunsMutation = useDeleteAccountQuantResearchRuns({
     request: { credentials: "include" },
   });
   const initializeMutation = usePostAccountPaperTrading({ request: { credentials: "include" } });
@@ -255,176 +239,29 @@ export default function QuantLabPage() {
 
   useEffect(() => {
     if (previousUserId.current !== userScope) {
-      const runsKey = String(getGetAccountQuantResearchRunsQueryKey()[0]);
       const paperKey = String(getGetAccountPaperTradingQueryKey()[0]);
       queryClient.removeQueries({
         predicate: (query) => {
           const key = String(query.queryKey[0] ?? "");
-          return (
-            key === runsKey ||
-            key.startsWith(`${runsKey}/`) ||
-            key === paperKey
-          );
+          return key === paperKey;
         },
       });
-      setActiveRunId(null);
-      setRunFeedback("");
-      setAiSummaryFeedback("");
-      summaryRequestedRunId.current = null;
       setPaperFeedback("");
+      setAssessmentInput("");
+      setAssessmentSymbol("");
+      setAssessmentRequested(false);
+      setAssessmentFeedback("");
+      setReportCopied(false);
       setResetDialogOpen(false);
-      setResetResearchRunsDialogOpen(false);
-      setResearchModalOpen(false);
-      setInterpretationDialogOpen(false);
-      setResearchInterpretation(null);
-      setPendingResearchInput(null);
-      setIsInterpreting(false);
-      setResearchLogs([]);
-      setResearchProgress(null);
-      setResearchStartedAt(null);
-      setResearchElapsedSeconds(0);
-      form.reset();
       initializeForm.reset();
       tradeForm.reset();
-      researchMutation.reset();
-      summaryMutation.reset();
       initializeMutation.reset();
       resetPortfolioMutation.reset();
-      resetResearchRunsMutation.reset();
       tradeMutation.reset();
     }
     previousUserId.current = userScope;
     userScopeRef.current = userScope;
   }, [userScope, queryClient]);
-
-  useEffect(() => {
-    const log = researchLogRef.current;
-    if (researchModalOpen && log) log.scrollTop = log.scrollHeight;
-  }, [researchLogs, researchModalOpen]);
-
-  useEffect(() => {
-    if (!researchMutation.isPending || researchStartedAt === null) return;
-    const updateElapsed = () =>
-      setResearchElapsedSeconds(
-        Math.floor((Date.now() - researchStartedAt) / 1_000),
-      );
-    updateElapsed();
-    const timer = window.setInterval(updateElapsed, 1_000);
-    return () => window.clearInterval(timer);
-  }, [researchMutation.isPending, researchStartedAt]);
-
-  const result: QuantResearchResult | undefined = activeRunId
-    ? selectedRun.data
-    : undefined;
-
-  const requestAiSummary = useCallback((runId: number) => {
-    summaryRequestedRunId.current = runId;
-    setAiSummaryFeedback("");
-    summaryMutation.mutate(
-      { runId },
-      {
-        onSuccess: (data) => {
-          if (userScopeRef.current !== userScope) return;
-          const summaryCacheKey = [
-            ...getGetAccountQuantResearchRunQueryKey(runId),
-            cacheScope,
-          ] as const;
-          queryClient.setQueryData<QuantResearchResult>(
-            summaryCacheKey,
-            (current) =>
-              current ? { ...current, aiSummary: data.aiSummary } : current,
-          );
-        },
-        onError: (error) => {
-          if (userScopeRef.current !== userScope) return;
-          setAiSummaryFeedback(
-            apiError(
-              error,
-              "AI 摘要暫時無法生成，回測數據仍可查看。",
-            ),
-          );
-        },
-      },
-    );
-  }, [cacheScope, queryClient, summaryMutation.mutate, userScope]);
-
-  useEffect(() => {
-    if (
-      !isSignedIn ||
-      !result ||
-      result.aiSummary !== undefined ||
-      summaryMutation.isPending ||
-      summaryRequestedRunId.current === result.runId
-    ) {
-      return;
-    }
-    requestAiSummary(result.runId);
-  }, [
-    isSignedIn,
-    requestAiSummary,
-    result?.aiSummary,
-    result?.runId,
-    summaryMutation.isPending,
-  ]);
-
-  const submitResearch = form.handleSubmit(async (values) => {
-    setRunFeedback("");
-    researchMutation.reset();
-    setResearchInterpretation(null);
-    setIsInterpreting(true);
-    const tickerFilter = values.tickerFilter?.trim().toUpperCase() || undefined;
-    const input: QuantResearchInput = {
-      ...values,
-      tickerFilter,
-      startingCapital: Number(values.startingCapital),
-      topN: Number(values.topN),
-    };
-    setPendingResearchInput(input);
-    try {
-      const plan = await postAccountQuantResearchInterpret(input, {
-        credentials: "include",
-      });
-      setResearchInterpretation(plan);
-      setInterpretationDialogOpen(true);
-    } catch (error) {
-      setRunFeedback(researchErrorMessage(error));
-    } finally {
-      setIsInterpreting(false);
-    }
-  });
-
-  const confirmResearchInterpretation = () => {
-    if (!pendingResearchInput || !researchInterpretation) return;
-    setInterpretationDialogOpen(false);
-    setRunFeedback("");
-    setResearchProgress(null);
-    setResearchStage("strategy");
-    setResearchElapsedSeconds(0);
-    setResearchStartedAt(Date.now());
-    setResearchModalOpen(true);
-    setResearchLogs([]);
-    appendResearchLog("已確認條件", researchInterpretation.summary);
-    researchMutation.mutate(
-      { data: { ...pendingResearchInput, interpretation: researchInterpretation } },
-      {
-        onSuccess: (data) => {
-          if (userScopeRef.current !== userScope) return;
-          setActiveRunId(data.runId);
-          queryClient.setQueryData(
-            [...getGetAccountQuantResearchRunQueryKey(data.runId), cacheScope],
-            data,
-          );
-          void queryClient.invalidateQueries({ queryKey: runsCacheKey });
-          setRunFeedback("研究完成，已保存至研究紀錄。");
-        },
-        onError: (error) => {
-          const message = researchErrorMessage(error);
-          setRunFeedback(message);
-          appendResearchLog("失敗", message);
-        },
-      },
-    );
-  };
 
   const updatePortfolio = (data: NonNullable<typeof portfolio.data>) => {
     queryClient.setQueryData(paperCacheKey, data);
@@ -483,26 +320,6 @@ export default function QuantLabPage() {
     });
   };
 
-  const resetResearchRuns = () => {
-    setRunFeedback("");
-    setAiSummaryFeedback("");
-    resetResearchRunsMutation.mutate(undefined, {
-      onSuccess: () => {
-        if (userScopeRef.current !== userScope) return;
-        queryClient.setQueryData(runsCacheKey, { runs: [] });
-        queryClient.removeQueries({ queryKey: selectedRunCacheKey });
-        setActiveRunId(null);
-        summaryRequestedRunId.current = null;
-        summaryMutation.reset();
-        setResetResearchRunsDialogOpen(false);
-        setRunFeedback("量化研究紀錄已清空。");
-        void queryClient.invalidateQueries({ queryKey: runsCacheKey });
-      },
-      onError: (error) =>
-        setRunFeedback(apiError(error, "研究紀錄清空失敗，請重試。")),
-    });
-  };
-
   return (
     <div className="ql-root">
       <style>{`
@@ -518,6 +335,85 @@ export default function QuantLabPage() {
         .ql-mark svg{transform:rotate(-45deg)}
         .ql-boundary{display:flex;align-items:flex-start;gap:11px;padding:13px 16px;border:1px solid hsl(var(--primary)/.25);border-left:3px solid hsl(var(--primary));background:hsl(var(--primary)/.055);color:hsl(var(--foreground));font-size:11px;line-height:1.6;margin-bottom:23px}
         .ql-boundary svg{color:hsl(var(--primary));flex:0 0 auto;margin-top:1px}
+        .ql-assessment{margin:0 0 20px;border:1px solid hsl(var(--border));background:linear-gradient(120deg,hsl(var(--secondary)/.28),hsl(var(--card)/.8))}
+        .ql-assessment-form{display:flex;gap:9px;align-items:flex-end;padding:15px 18px}
+        .ql-assessment-form label{display:grid;gap:6px;flex:1;color:hsl(var(--foreground));font-size:11px;font-weight:700}
+        .ql-assessment-form input{width:100%;min-height:40px;box-sizing:border-box;padding:8px 10px;border:1px solid hsl(var(--input));background:hsl(var(--background));color:hsl(var(--foreground));font:12px var(--app-font-mono)}
+        .ql-assess-button{min-height:40px;padding:0 14px;display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid hsl(var(--primary));background:hsl(var(--primary));color:hsl(var(--primary-foreground));font-size:11px;font-weight:700;white-space:nowrap}
+        .ql-assess-button:disabled{opacity:.55;cursor:not-allowed}
+        .ql-assess-result{padding:0 18px 18px}
+        .ql-assess-loading{display:grid;gap:8px;padding:8px 0}
+        .ql-assess-loading i{height:12px;background:linear-gradient(90deg,hsl(var(--muted)),hsl(var(--card)),hsl(var(--muted)));background-size:200% 100%;animation:ql-shimmer 1.4s ease-in-out infinite}
+        .ql-assess-error{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;color:hsl(var(--destructive));border:1px solid hsl(var(--destructive)/.25);font-size:11px}
+        .ql-assess-report{border-top:1px solid hsl(var(--border));padding-top:15px}
+        .ql-assess-title{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px}
+        .ql-scan-tags{margin:12px 0;padding:11px 12px;border:1px solid hsl(var(--primary)/.24);background:hsl(var(--primary)/.045)}
+        .ql-scan-tags>div:last-child{display:flex;flex-wrap:wrap;gap:7px}
+        .ql-scan-tags>div:last-child span{padding:5px 8px;border:1px solid hsl(var(--border));background:hsl(var(--card));font-size:10px;line-height:1.4}
+        .ql-assess-title h3{margin:3px 0;font-size:18px;letter-spacing:-.03em}
+        .ql-assess-title p{margin:0;color:hsl(var(--muted-foreground));font-size:10px;line-height:1.5}
+        .ql-assess-copy{flex:0 0 auto;min-height:34px;padding:0 10px;display:inline-flex;align-items:center;gap:7px;border:1px solid hsl(var(--border));background:hsl(var(--card));color:hsl(var(--foreground));font-size:10px}
+        .ql-assess-provenance{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid hsl(var(--border));margin:12px 0}
+        .ql-assess-provenance div{min-width:0;padding:9px 11px;border-right:1px solid hsl(var(--border))}
+        .ql-assess-provenance div:last-child{border-right:0}
+        .ql-assess-provenance span,.ql-assess-provenance strong{display:block;overflow-wrap:anywhere}
+        .ql-assess-provenance span{color:hsl(var(--muted-foreground));font-size:9px}
+        .ql-assess-provenance strong{margin-top:5px;font:600 11px var(--app-font-mono)}
+        .ql-assess-summary{margin:0;padding:12px;border-left:2px solid hsl(var(--primary));background:hsl(var(--primary)/.055);font-size:11px;line-height:1.65}
+        .ql-trade-snapshot{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;margin:12px 0;background:hsl(var(--border));border:1px solid hsl(var(--border))}
+        .ql-trade-snapshot>div{min-width:0;padding:11px;background:hsl(var(--card))}
+        .ql-trade-snapshot span,.ql-trade-snapshot strong,.ql-trade-snapshot small{display:block}
+        .ql-trade-snapshot span{color:hsl(var(--muted-foreground));font-size:9px}
+        .ql-trade-snapshot strong{margin-top:6px;font-size:12px;overflow-wrap:anywhere}
+        .ql-trade-snapshot small{margin-top:4px;color:hsl(var(--muted-foreground));font-size:9px;line-height:1.45}
+        .ql-rr-good{color:hsl(145 55% 38%)}
+        .ql-rr-caution{color:hsl(38 85% 42%)}
+        .ql-rr-risk{color:hsl(var(--destructive))}
+        .ql-rr-neutral{color:hsl(var(--muted-foreground))}
+        .ql-core-decision{margin:12px 0;padding:12px;border:1px solid hsl(var(--primary)/.28);border-left:3px solid hsl(var(--primary));background:hsl(var(--primary)/.055)}
+        .ql-core-decision>div{display:flex;align-items:center;gap:10px}
+        .ql-core-decision>div span{color:hsl(var(--muted-foreground));font-size:9px}
+        .ql-core-decision>div strong{font-size:12px}
+        .ql-core-decision p{margin:8px 0 0;font-size:11px;line-height:1.65}
+        .ql-core-decision small{display:block;margin-top:7px;color:hsl(var(--muted-foreground));font-size:9px;line-height:1.55}
+        .ql-assess-section{margin-top:14px}
+        .ql-assess-section-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline;margin-bottom:8px}
+        .ql-assess-section h4{margin:0;font-size:12px}
+        .ql-assess-section-head small,.ql-assess-note{color:hsl(var(--muted-foreground));font-size:9px;line-height:1.55}
+        .ql-score-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+        .ql-score-item{padding:9px 10px;border:1px solid hsl(var(--border));background:hsl(var(--card)/.6)}
+        .ql-score-item-head{display:flex;justify-content:space-between;gap:10px;font-size:10px}
+        .ql-score-item-head strong{font:600 10px var(--app-font-mono);white-space:nowrap}
+        .ql-score-item p{margin:5px 0 0;color:hsl(var(--muted-foreground));font-size:9px;line-height:1.5}
+        .ql-score-track{height:3px;margin-top:7px;background:hsl(var(--muted))}
+        .ql-score-track span{display:block;height:100%;background:hsl(var(--primary))}
+        .ql-scenario-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+        .ql-scenario{padding:12px;border:1px solid hsl(var(--border));background:hsl(var(--card)/.55)}
+        .ql-scenario h5{margin:0 0 9px;font-size:11px}
+        .ql-scenario dl{display:grid;grid-template-columns:1fr auto;gap:6px 10px;margin:0;font-size:10px}
+        .ql-scenario dt{color:hsl(var(--muted-foreground))}
+        .ql-scenario dd{margin:0;font:600 10px var(--app-font-mono);text-align:right}
+        .ql-scenario-table-wrap{max-width:100%;overflow-x:auto;border:1px solid hsl(var(--border))}
+        .ql-scenario-table{width:100%;min-width:700px;border-collapse:collapse;text-align:left}
+        .ql-scenario-table th,.ql-scenario-table td{padding:10px 11px;border-bottom:1px solid hsl(var(--border));font-size:10px;vertical-align:top}
+        .ql-scenario-table thead th{background:hsl(var(--secondary)/.42);color:hsl(var(--muted-foreground));font-size:9px;white-space:nowrap}
+        .ql-scenario-table tbody th{font-weight:700}
+        .ql-scenario-table td{font:600 10px var(--app-font-mono);white-space:nowrap}
+        .ql-scenario-table tr:last-child th,.ql-scenario-table tr:last-child td{border-bottom:0}
+        .ql-action-plan{margin-top:14px;padding:12px;border:1px solid hsl(var(--border));background:hsl(var(--card)/.55)}
+        .ql-action-plan p{margin:7px 0 0;font-size:10px;line-height:1.6}
+        .ql-action-plan .ql-action-levels{padding:8px 10px;border-left:2px solid hsl(var(--primary));background:hsl(var(--primary)/.05);font-family:var(--app-font-mono)}
+        .ql-action-plan .ql-risk-note{margin-top:10px;color:hsl(var(--destructive))}
+        .ql-disclaimer{margin-top:12px;padding:10px 12px;border:1px solid hsl(var(--accent)/.45);background:hsl(var(--accent)/.11);font-size:10px;line-height:1.6}
+        .ql-workflow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0 0 13px;border:1px solid hsl(var(--border))}
+        .ql-workflow span{padding:8px 9px;color:hsl(var(--muted-foreground));font-size:9px;border-right:1px solid hsl(var(--border))}
+        .ql-workflow span:last-child{border-right:0}
+        .ql-workflow b{margin-right:5px;color:hsl(var(--primary));font:10px var(--app-font-mono)}
+        .ql-risk-scan{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;border:1px solid hsl(var(--border));background:hsl(var(--border))}
+        .ql-risk-scan>div{min-width:0;padding:10px;background:hsl(var(--card))}
+        .ql-risk-scan span{display:block;color:hsl(var(--muted-foreground));font-size:9px}
+        .ql-risk-scan strong{display:block;margin-top:6px;font:700 13px var(--app-font-mono);overflow-wrap:anywhere}
+        .ql-risk-scan small{display:block;margin-top:4px;color:hsl(var(--muted-foreground));font-size:9px;line-height:1.4}
         .ql-grid{display:grid;grid-template-columns:minmax(290px,.8fr) minmax(0,1.65fr);gap:18px;align-items:start;min-width:0}
         .ql-left-stack{display:grid;gap:18px;min-width:0}
         .ql-panel{min-width:0;border:1px solid var(--glass-edge, hsl(var(--border)));border-radius:19px;background:linear-gradient(145deg,rgba(255,255,255,.56),rgba(255,255,255,.08) 62%),var(--glass-surface,hsl(var(--card)/.88));box-shadow:var(--glass-shadow,0 8px 24px hsl(var(--foreground)/.025)),inset 0 1px 0 rgba(255,255,255,.72);backdrop-filter:blur(24px) saturate(1.45);-webkit-backdrop-filter:blur(24px) saturate(1.45)}
@@ -667,7 +563,7 @@ export default function QuantLabPage() {
         .ql-reset-cancel{min-height:42px;border:1px solid hsl(var(--border));background:transparent;color:hsl(var(--foreground));font-size:11px;font-weight:650}
         .ql-warning{margin:14px 0 0;padding:11px 13px;border:1px solid hsl(var(--accent)/.5);background:hsl(var(--accent)/.13);font-size:10px;color:hsl(var(--foreground));line-height:1.55}
         .ql-warning strong{display:block;margin-bottom:3px}
-        @media(max-width:680px){.ql-result-title small{white-space:normal;overflow-wrap:anywhere}.ql-signal-rules{grid-template-columns:1fr}}
+        @media(max-width:680px){.ql-result-title small{white-space:normal;overflow-wrap:anywhere}.ql-signal-rules{grid-template-columns:1fr}.ql-assess-form{align-items:stretch}.ql-assessment-form{flex-direction:column;align-items:stretch}.ql-assess-provenance{grid-template-columns:repeat(2,minmax(0,1fr))}.ql-assess-provenance div:nth-child(2){border-right:0}.ql-assess-provenance div:nth-child(-n+2){border-bottom:1px solid hsl(var(--border))}.ql-score-list,.ql-scenario-grid{grid-template-columns:1fr}.ql-trade-snapshot{grid-template-columns:1fr}.ql-risk-scan{grid-template-columns:repeat(2,minmax(0,1fr))}.ql-assess-title{flex-direction:column}}
         .ql-auth{max-width:600px;margin:64px auto;padding:38px;text-align:center}
         .ql-auth svg{color:hsl(var(--primary))}
         .ql-auth h2{font-size:20px;margin:14px 0 8px}
@@ -684,14 +580,14 @@ export default function QuantLabPage() {
           <header className="ql-head">
             <div>
               <h1>量化研究室</h1>
-              <p>從一個可檢驗的假設開始。AI 依核准價量資料提出明確買賣條件與因子權重，再以官方日資料回測；門檻不會依本次歷史績效最佳化，也不代表未來表現。</p>
+              <p>使用官方市場資料查看單一股票量化評估，並管理不涉及真實下單的紙上投資組合。</p>
             </div>
             <div className="ql-mark" aria-hidden="true"><Activity size={28} /></div>
           </header>
 
           <div className="ql-boundary" data-testid="notice-paper-only">
             <ShieldCheck size={17} />
-            <span><strong>僅供研究與模擬。</strong>此工具不會送出真實委託。回測採可重現規則與官方日資料；資料涵蓋、期間限制及策略假設可能影響結果，請先檢視下方來源與限制。</span>
+            <span><strong>僅供參考與模擬。</strong>本頁不會送出真實委託；個股評估依其資料來源與更新時間，紙上投資組合則依你輸入的模擬成交價記錄。</span>
           </div>
 
           {authLoading ? (
@@ -702,11 +598,70 @@ export default function QuantLabPage() {
             <section className="ql-panel ql-auth" data-testid="panel-sign-in-required">
               <LockKeyhole size={28} />
               <h2>研究室僅供受邀會員使用</h2>
-              <p>登入後即可建立量化研究、讀取已儲存的回測，並記錄不涉及真實下單的紙上交易。</p>
+              <p>登入後即可查看單一股票量化評估，並記錄不涉及真實下單的紙上交易。</p>
               <Link href="/sign-in" data-testid="link-quant-sign-in">登入會員</Link>
             </section>
           ) : (
             <>
+              <section className="ql-panel ql-assessment" aria-labelledby="ql-stock-assessment-title" data-testid="panel-single-stock-assessment">
+                <div className="ql-panel-head">
+                  <div><span className="ql-index">LIVE ASSESSMENT / ON DEMAND</span><h2 id="ql-stock-assessment-title">單一股票量化評估</h2><p>按下評估後才呼叫分析服務；結果反映目前可取得的市場證據。</p></div>
+                  <Activity size={17} aria-hidden="true" />
+                </div>
+                <form className="ql-assessment-form" onSubmit={(event) => {
+                  event.preventDefault();
+                  const symbol = assessmentInput.trim().toUpperCase();
+                  setReportCopied(false);
+                  if (!/^[A-Z0-9]{4,6}(?:\.(?:TW|TWO))?$/.test(symbol)) {
+                    setAssessmentFeedback("請輸入 4 至 6 位英數代碼，可加上 .TW 或 .TWO。");
+                    return;
+                  }
+                  setAssessmentFeedback("");
+                  if (assessmentRequested && symbol === assessmentSymbol) {
+                    void assessmentQuery.refetch();
+                    return;
+                  }
+                  setAssessmentSymbol(symbol);
+                  setAssessmentRequested(true);
+                }} data-testid="form-single-stock-assessment">
+                  <label htmlFor="ql-assessment-symbol">股票代碼
+                    <input id="ql-assessment-symbol" value={assessmentInput} onChange={(event) => setAssessmentInput(event.target.value)} placeholder="2330.TW" autoComplete="off" aria-describedby="ql-assessment-help" data-testid="input-assessment-symbol" />
+                    <small id="ql-assessment-help" className="ql-form-help">代碼格式：4–6 位英數，可選 .TW / .TWO。沒有後綴時依服務既有規則判讀。</small>
+                  </label>
+                  <button className="ql-assess-button" type="submit" disabled={assessmentQuery.isFetching} data-testid="button-request-stock-assessment">
+                    {assessmentQuery.isFetching ? <><RefreshCw className="ql-spin" size={14} />正在取得證據</> : <><Activity size={14} />{assessmentRequested ? "重新評估" : "評估此股票"}</>}
+                  </button>
+                </form>
+                {assessmentFeedback && <div className={`ql-feedback ${reportCopied ? "" : "error"}`} role={reportCopied ? "status" : "alert"} data-testid="status-assessment-feedback">{assessmentFeedback}</div>}
+                {assessmentRequested && (
+                  <div className="ql-assess-result">
+                    {assessmentQuery.isLoading || assessmentQuery.isFetching ? (
+                      <div className="ql-assess-loading" role="status" aria-label="正在載入個股評估" data-testid="status-stock-assessment-loading"><i /><i /><i /></div>
+                    ) : assessmentQuery.isError ? (
+                      <div className="ql-assess-error" role="alert" data-testid="status-stock-assessment-error">
+                        <span>{apiError(assessmentQuery.error, "評估資料暫時無法取得，請稍後重試。")}</span>
+                        <button type="button" className="ql-assess-button" onClick={() => void assessmentQuery.refetch()} data-testid="button-retry-stock-assessment">重試</button>
+                      </div>
+                    ) : assessmentQuery.data ? (
+                      <StockAssessmentReport
+                        assessment={assessmentQuery.data}
+                        copied={reportCopied}
+                        onCopy={async () => {
+                          try {
+                            await navigator.clipboard.writeText(assessmentQuery.data!.reportMarkdown);
+                            setReportCopied(true);
+                            setAssessmentFeedback("Markdown 報告已複製。");
+                          } catch {
+                            setReportCopied(false);
+                            setAssessmentFeedback("無法使用剪貼簿；請確認瀏覽器權限後重試。");
+                          }
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                )}
+              </section>
+              {/* Historical backtest interface removed; persisted records are preserved.
               <div className="ql-grid">
                 <div className="ql-left-stack">
                   <section className="ql-panel" data-testid="panel-research-form">
@@ -717,6 +672,9 @@ export default function QuantLabPage() {
                     <div className="ql-body">
                       <Form {...form}>
                         <form className="ql-form" onSubmit={submitResearch} data-testid="form-quant-research">
+                          <div className="ql-workflow" aria-label="研究執行步驟" data-testid="status-research-workflow">
+                            <span><b>01</b>描述假設</span><span><b>02</b>確認 AI 條件</span><span><b>03</b>載入資料並回測</span>
+                          </div>
                           <FormField control={form.control} name="hypothesis" rules={{ required: "請輸入至少 8 個字的假設", minLength: { value: 8, message: "假設至少需要 8 個字" }, maxLength: { value: 600, message: "最多 600 個字" } }} render={({ field }) => (
                             <FormItem>
                               <FormLabel className="ql-label">研究假設</FormLabel>
@@ -759,7 +717,7 @@ export default function QuantLabPage() {
                           <button className="ql-button" type="submit" disabled={researchMutation.isPending || isInterpreting} data-testid="button-run-research" aria-busy={researchMutation.isPending || isInterpreting}>
                             {isInterpreting ? <><RefreshCw className="ql-spin" size={15} /> AI 正在判讀假設</> : researchMutation.isPending ? <><RefreshCw className="ql-spin" size={15} /> 正在執行研究</> : <><BarChart3 size={16} /> AI 判讀並確認條件</>}
                           </button>
-                          {runFeedback && <div className={`ql-feedback ${researchMutation.isError ? "error" : ""}`} role={researchMutation.isError ? "alert" : "status"} data-testid="status-research-feedback">{runFeedback}</div>}
+                          {runFeedback && <div className={`ql-feedback ${runFeedbackIsError ? "error" : ""}`} role={runFeedbackIsError ? "alert" : "status"} data-testid="status-research-feedback">{runFeedback}</div>}
                         </form>
                       </Form>
                     </div>
@@ -842,17 +800,104 @@ export default function QuantLabPage() {
                               )}
                               {result.timingComparison && <div className="ql-warning" data-testid="panel-timing-comparison">
                                 <strong>個股進場時機分段驗證</strong>
-                                <p>前 60% 交易日（{result.timingComparison.calibrationStartDate} 至 {result.timingComparison.calibrationEndDate}）用來挑選門檻；後 40%（{result.timingComparison.validationStartDate} 至 {result.timingComparison.validationEndDate}）只用來驗證，不參與挑選。比較 AI 基準進場規則及 20 日動能門檻上下各 5 個百分點的候選；三組共用 AI 賣出條件。</p>
+                                <p>前 60% 交易日（{result.timingComparison.calibrationStartDate} 至 {result.timingComparison.calibrationEndDate}）用來挑選門檻；後 40%（{result.timingComparison.validationStartDate} 至 {result.timingComparison.validationEndDate}）只用來驗證，不參與挑選。比較 AI 基準及 20 日動能門檻上下最多 10 個百分點的候選；候選與原門檻共用 AI 賣出條件。</p>
                                 <p>驗證結果：勝率 {pct(result.timingComparison.validation.winRatePercent)}，已完成交易 {result.timingComparison.validation.closedTradeCount} 筆，總報酬 {pct(result.timingComparison.validation.totalReturnPercent)}，最大回撤 {pct(result.timingComparison.validation.maxDrawdownPercent)}。</p>
+                                <p data-testid="status-backtest-80-target">
+                                  {result.timingComparison.validation.closedTradeCount < 20
+                                    ? `尚未驗收 80% 目標：樣本 ${result.timingComparison.validation.closedTradeCount}/20 筆`
+                                    : (result.timingComparison.validation.winRatePercent ?? 0) >= 80
+                                      ? "已達 80% 樣本外交易勝率目標"
+                                      : "未達 80% 樣本外交易勝率目標"}
+                                </p>
                                 {(result.timingComparison.calibrationCandidates.find((candidate) => candidate.selected)?.closedTradeCount ?? 0) < 3 && <p role="status">訓練期完整交易少於 3 筆，候選挑選樣本不足；系統保留 AI 基準規則，不依少量交易選出高勝率候選。</p>}
                                 {result.timingComparison.validation.closedTradeCount < 3 && <p role="status">驗證期完整交易少於 3 筆，勝率樣本不足，請勿視為穩定結論。</p>}
                                 <div className="ql-table-wrap"><table className="ql-table"><thead><tr><th>訓練候選</th><th>完整交易</th><th>勝率</th><th>總報酬</th><th>挑選</th></tr></thead><tbody>{result.timingComparison.calibrationCandidates.map((candidate) => <tr key={candidate.name}><td>{candidate.name}</td><td>{candidate.closedTradeCount}</td><td>{pct(candidate.winRatePercent)}</td><td>{pct(candidate.totalReturnPercent)}</td><td>{candidate.selected ? "已選用" : "—"}</td></tr>)}</tbody></table></div>
                                 <small>勝率以扣除估計手續費與交易稅後獲利的已完成買賣週期計算；未平倉部位不計入勝率。</small>
                               </div>}
+                              {result.walkForward && <div className="ql-warning" data-testid="panel-walk-forward">
+                                <strong>Walk-forward 滾動樣本外驗證</strong>
+                                <p>每折只用訓練區間比較門檻，再套用到後續未參與挑選的驗證區間。各折重新選擇門檻；這是日線歷史模擬，不是當沖績效。</p>
+                                <div className="ql-table-wrap"><table className="ql-table"><thead><tr><th>折次</th><th>訓練區間</th><th>驗證區間</th><th>門檻</th><th>交易</th><th>勝率</th><th>報酬</th><th>最大回撤</th></tr></thead><tbody>
+                                  {result.walkForward.folds.map((fold) => <tr key={fold.index} data-testid={`row-walk-forward-${fold.index}`}>
+                                    <td>{fold.index}</td><td>{dateText(fold.trainStartDate)}–{dateText(fold.trainEndDate)}</td><td>{dateText(fold.validationStartDate)}–{dateText(fold.validationEndDate)}</td><td>{pct(fold.selectedThreshold * 100)}</td><td>{fold.closedTradeCount}</td><td>{pct(fold.winRatePercent)}</td><td>{pct(fold.totalReturnPercent)}</td><td>{pct(fold.maxDrawdownPercent)}</td>
+                                  </tr>)}
+                                </tbody></table></div>
+                              </div>}
+                              {result.parameterStability && <div className="ql-warning" data-testid="panel-parameter-stability">
+                                <strong>參數穩定度（校準區間）</strong>
+                                <p>只展示校準區間的敏感度，不用驗證區間挑參數。調整 20 日動能門檻與訊號檢查頻率；單點最佳不代表穩定，並注意各組交易樣本數。</p>
+                                <div className="ql-table-wrap"><table className="ql-table"><thead><tr><th>動能門檻</th><th>每日檢查</th><th>每週檢查</th><th>每月檢查</th></tr></thead><tbody>
+                                  {[...new Set(result.parameterStability.grid.map((point) => point.threshold))].sort((a, b) => a - b).map((threshold, rowIndex) => <tr key={threshold} data-testid={`row-parameter-stability-${rowIndex}`}>
+                                    <th>{pct(threshold * 100)}</th>
+                                    {(["daily", "weekly", "monthly"] as const).map((rebalance) => {
+                                      const point = result.parameterStability!.grid.find((item) => item.threshold === threshold && item.rebalance === rebalance);
+                                      const alpha = point ? Math.min(0.55, 0.16 + Math.abs(point.totalReturnPercent) / 100) : 0;
+                                      return <td key={rebalance} style={{ backgroundColor: point ? point.totalReturnPercent >= 0 ? `hsl(157 45% 38% / ${alpha})` : `hsl(2 58% 48% / ${alpha})` : undefined }}>
+                                        {point ? <><strong>{pct(point.totalReturnPercent)}</strong><small style={{ display: "block" }}>勝率 {pct(point.winRatePercent)} · {point.closedTradeCount} 筆 · 回撤 {pct(point.maxDrawdownPercent)}</small></> : "—"}
+                                      </td>;
+                                    })}
+                                  </tr>)}
+                                </tbody></table></div>
+                                <small>綠色為正報酬、紅色為負報酬；顏色深淺反映報酬幅度，不代表統計顯著性。</small>
+                                <small>{dateText(result.parameterStability.calibrationStartDate)}–{dateText(result.parameterStability.calibrationEndDate)}；不得將校準區間表現視為樣本外成績。</small>
+                              </div>}
+                              {result.monteCarlo && <div className="ql-warning" data-testid="panel-monte-carlo">
+                                <strong>蒙地卡羅風險分布</strong>
+                                {result.monteCarlo.simulationCount > 0 ? <>
+                                  <p>以 {result.monteCarlo.sampledSessions} 個 Walk-forward 樣本外日報酬進行 {result.monteCarlo.simulationCount.toLocaleString("zh-TW")} 次有放回抽樣。這是歷史路徑風險情境，不是未來預測。</p>
+                                  <div className="ql-metrics ql-secondary-metrics">
+                                    <div className="ql-metric"><span>期末報酬 P5</span><strong>{pct(result.monteCarlo.terminalReturnP05Percent)}</strong></div>
+                                    <div className="ql-metric"><span>期末報酬中位數</span><strong>{pct(result.monteCarlo.terminalReturnMedianPercent)}</strong></div>
+                                    <div className="ql-metric"><span>期末報酬 P95</span><strong>{pct(result.monteCarlo.terminalReturnP95Percent)}</strong></div>
+                                    <div className="ql-metric"><span>虧損情境比例</span><strong>{pct(result.monteCarlo.probabilityOfLossPercent)}</strong></div>
+                                    <div className="ql-metric"><span>最大回撤 P95</span><strong>{pct(result.monteCarlo.maxDrawdownP95Percent)}</strong></div>
+                                  </div>
+                                  <div aria-label="蒙地卡羅期末報酬分布" data-testid="chart-monte-carlo-distribution">
+                                    {result.monteCarlo.terminalReturnBuckets.map((bucket) => {
+                                      const maxCount = Math.max(1, ...result.monteCarlo!.terminalReturnBuckets.map((item) => item.count));
+                                      const width = (bucket.count / maxCount) * 100;
+                                      return <div key={bucket.range} style={{ display: "grid", gridTemplateColumns: "74px 1fr 42px", gap: 8, alignItems: "center", margin: "5px 0" }}>
+                                        <small>{bucket.range}</small>
+                                        <div role="progressbar" aria-label={`期末報酬 ${bucket.range}`} aria-valuemin={0} aria-valuemax={maxCount} aria-valuenow={bucket.count} style={{ height: 8, borderRadius: 8, background: "hsl(var(--muted))" }}>
+                                          <span style={{ display: "block", width: `${width}%`, height: "100%", borderRadius: 8, background: "hsl(var(--primary))" }} />
+                                        </div>
+                                        <small>{bucket.count}</small>
+                                      </div>;
+                                    })}
+                                  </div>
+                                </> : <p>樣本外報酬數量或有效變動不足以支撐抽樣；暫不計算模擬分布（觀察日數 {result.monteCarlo.sampledSessions}）。</p>}
+                                <small>{result.monteCarlo.method}；不適用於定期投入，也不代表真實損失機率。</small>
+                              </div>}
                               {result.costStress && <div className="ql-warning" data-testid="panel-cost-stress">
                                 <strong>成本加倍壓力測試</strong>
                                 <p>基準每邊含 0.1% 滑價；此情境將滑價、手續費與證交稅一併加倍。{result.strategy.positionSizing?.mode === "fixed_cash" ? <>兩倍成本下，以累計投入為基準的總報酬為 {pct(result.costStress.totalReturnPercent)}。</> : <>結果：總報酬 {pct(result.costStress.totalReturnPercent)}，勝率 {pct(result.costStress.winRatePercent)}，已完成交易 {result.costStress.closedTradeCount} 筆，賺賠比 {result.costStress.payoffRatio == null ? "—" : result.costStress.payoffRatio.toFixed(2)}。</>}</p>
                               </div>}
+                              <div className="ql-warning" data-testid="status-quant-80-target">
+                                <strong>80% 勝率目標驗收</strong>
+                                {result.strategy.positionSizing?.mode === "fixed_cash" ? (
+                                  <p>定期投入策略不以單筆獲利率評分；請看總報酬、相對大盤和成本情境。</p>
+                                ) : result.timingComparison ? (
+                                  <p>
+                                    樣本外交易勝率 {pct(result.timingComparison.validation.winRatePercent)}（{result.timingComparison.validation.closedTradeCount} 筆）；
+                                    {result.timingComparison.validation.closedTradeCount < 20
+                                      ? "樣本少於 20 筆，尚不能驗收 80% 目標。"
+                                      : (result.timingComparison.validation.winRatePercent ?? 0) >= 80
+                                        ? "達到 80% 樣本外目標。"
+                                        : "未達 80% 樣本外目標。"}
+                                  </p>
+                                ) : (
+                                  <p>本次沒有獨立樣本外區間；回測勝率不能用來驗收 80% 目標。</p>
+                                )}
+                              </div>
+                              <section className="ql-assess-section" aria-label="回測風險與驗證摘要" data-testid="panel-backtest-risk-scan">
+                                <div className="ql-assess-section-head"><h4>風險與驗證速覽</h4><small>歷史模擬數據；不是目前個股評估</small></div>
+                                <div className="ql-risk-scan">
+                                  <div><span>{result.strategy.positionSizing?.mode === "fixed_cash" ? "回撤" : "最大回撤"}</span><strong>{result.strategy.positionSizing?.mode === "fixed_cash" ? "不適用" : pct(result.metrics.maxDrawdownPercent)}</strong><small>{result.strategy.positionSizing?.mode === "fixed_cash" ? "定期投入採投入本金基準" : "依本次回測資產曲線"}</small></div>
+                                  <div><span>成本加倍情境</span><strong>{result.costStress ? pct(result.costStress.totalReturnPercent) : "未提供"}</strong><small>{result.costStress ? "總報酬；細節見下方壓力測試" : "此紀錄未包含成本壓力測試"}</small></div>
+                                  <div><span>樣本外驗證</span><strong>{result.timingComparison ? pct(result.timingComparison.validation.winRatePercent) : "無獨立驗證"}</strong><small>{result.timingComparison ? `${result.timingComparison.validation.closedTradeCount} 筆驗證交易` : "不可將整段回測勝率視為樣本外成績"}</small></div>
+                                  <div><span>官方資料覆蓋</span><strong>{result.coverage.dataStartDate && result.coverage.dataEndDate ? `${dateText(result.coverage.dataStartDate)} – ${dateText(result.coverage.dataEndDate)}` : "資料未提供"}</strong><small>{result.coverage.tradingDays.toLocaleString("zh-TW")} 個交易日可用</small></div>
+                                </div>
+                              </section>
                               {result.tickerFilter && <div className="ql-warning" data-testid="notice-single-stock-result"><strong>本次只回測 {result.tickerFilter}</strong>{result.strategy.positionSizing?.mode === "fixed_cash" ? "依指定日期定期投入並持有至期末，不檢查 AI 買賣條件。" : result.strategy.entryRule && result.strategy.exitRule ? "逐交易日檢查買賣條件；顯示的勝率只來自未參與挑選的驗證期間。" : "這筆舊版回測沒有明確的個股買賣時機條件。"}</div>}
                              <details className="ql-details" data-testid="details-backtest-analysis">
                                <summary>走勢、其他指標與資料範圍</summary>
@@ -915,6 +960,7 @@ export default function QuantLabPage() {
                 </section>
               </div>
 
+              */}
               <div className="ql-columns">
                 <section className="ql-panel" data-testid="panel-paper-portfolio">
                   <div className="ql-panel-head">
@@ -969,13 +1015,10 @@ export default function QuantLabPage() {
                   <div className="ql-warning" data-testid="notice-paper-disclaimer"><strong>模擬交易，不是真實委託</strong>{portfolio.data?.disclaimer ?? "成交價由使用者輸入；持倉市值依最近官方收盤價估值。估算手續費與交易稅；未連接券商、不代表可成交價格，也不構成投資建議。"}</div>
                 </section>
                 <section className="ql-panel" data-testid="panel-methodology">
-                  <div className="ql-panel-head"><div><span className="ql-index">METHOD / LIMITS</span><h2>方法與資料界線</h2><p>每筆回測都應與其來源範圍一起閱讀。</p></div><Database size={17} /></div>
+                  <div className="ql-panel-head"><div><span className="ql-index">PAPER / LIMITS</span><h2>紙上交易界線</h2><p>這裡只記錄模擬交易，不會送出真實委託。</p></div><Database size={17} /></div>
                   <div className="ql-paper-content" style={{ display: "grid", gap: 13 }}>
-                    <div className="ql-source"><ShieldCheck size={14} /><span>策略由 AI 從允許的動能、流動性與低波動價量因子中選擇；不使用未核准的基本面或未公開資料。</span></div>
-                    <div className="ql-source"><Database size={14} /><span>回測使用 TWSE／TPEx 官方歷史日資料。實際可用期間及證券數以回測回傳的 coverage 為準；缺漏資料不應解讀成零。</span></div>
-                    <div className="ql-source"><Activity size={14} /><span>回測績效為歷史模擬，可能受存續者偏誤、資料可得性、費用假設、流動性、滑價與市場制度變動影響。</span></div>
-                    <div className="ql-source"><LockKeyhole size={14} /><span>紙上交易價格由會員自行輸入；持倉市值依最近官方收盤價估值。只更新模擬帳本，沒有下單、委託或券商介接。</span></div>
-                    <p style={{ margin: 0, color: "hsl(var(--muted-foreground))", fontSize: 10, lineHeight: 1.6 }}>研究輸出供假設檢視，不是投資建議、報酬承諾或真實交易執行。請同時查看每筆回測的資料指紋、資料期間與 API 聲明。</p>
+                    <div className="ql-source"><LockKeyhole size={14} /><span>成交價格由你手動輸入，持倉市值依最近官方收盤價估值；只更新模擬帳本，不連接券商，也不會下單。</span></div>
+                    <div className="ql-source"><ShieldCheck size={14} /><span>紙上交易僅供記錄與觀察，不代表可成交價格或投資建議。</span></div>
                   </div>
                 </section>
               </div>
@@ -983,6 +1026,7 @@ export default function QuantLabPage() {
           )}
         </div>
       </main>
+      {/* Research-history deletion dialog removed; persisted records are preserved.
       {resetResearchRunsDialogOpen && (
         <div className="ql-reset-backdrop">
           <section
@@ -1026,6 +1070,7 @@ export default function QuantLabPage() {
           </section>
         </div>
       )}
+      */}
       {resetDialogOpen && (
         <div className="ql-reset-backdrop">
           <section
@@ -1038,7 +1083,7 @@ export default function QuantLabPage() {
           >
             <h2 id="ql-reset-title">重設紙上投資組合？</h2>
             <p id="ql-reset-description">
-              此操作會清除全部紙上持倉與交易紀錄，並把可用現金恢復至起始本金 {money(portfolio.data?.startingCash)}。不會影響回測研究紀錄。清除後無法復原。
+              此操作會清除全部紙上持倉與交易紀錄，並把可用現金恢復至起始本金 {money(portfolio.data?.startingCash)}。清除後無法復原。
             </p>
             {resetPortfolioMutation.isError && paperFeedback && (
               <div className="ql-feedback error" role="alert" style={{ marginTop: 12 }}>{paperFeedback}</div>
@@ -1052,6 +1097,7 @@ export default function QuantLabPage() {
           </section>
         </div>
       )}
+      {/* Backtest confirmation and progress dialogs removed.
       {interpretationDialogOpen && researchInterpretation && (
         <div className="ql-progress-backdrop">
           <section className="ql-progress-dialog" role="dialog" aria-modal="true" aria-labelledby="ql-interpretation-title" data-testid="dialog-research-interpretation">
@@ -1260,6 +1306,7 @@ export default function QuantLabPage() {
           </section>
         </div>
       )}
+      */}
     </div>
   );
 }

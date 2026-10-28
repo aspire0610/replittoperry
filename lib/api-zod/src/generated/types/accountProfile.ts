@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { EtfHolding } from './etfHolding';
 import type { WatchlistEntry } from './watchlistEntry';
 
 export interface AccountProfile {
@@ -13,5 +14,7 @@ export interface AccountProfile {
   isAdmin: boolean;
   /** @maxItems 100 */
   watchlist: WatchlistEntry[];
+  /** @maxItems 100 */
+  etfHoldings: EtfHolding[];
   maxWatchlistItems: number;
 }
