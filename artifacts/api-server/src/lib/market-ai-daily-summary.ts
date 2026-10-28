@@ -201,11 +201,11 @@ async function generateDailySummary(
       schema: DAILY_SUMMARY_SCHEMA,
       maxOutputTokens: 900,
       timeoutMs: 8_000,
-      geminiTimeoutMs: 20_000,
-      maxFallbackDurationMs: 35_000,
+      geminiTimeoutMs: 12_000,
+      maxFallbackDurationMs: 24_000,
       agnesAiTimeoutMs: 8_000,
       ollamaTimeoutMs: 8_000,
-      openRouterTimeoutMs: 10_000,
+      openRouterTimeoutMs: 12_000,
       validateOutput: isValidSummaryOutput,
     });
 

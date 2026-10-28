@@ -1101,6 +1101,18 @@ export function hasAiProviderCredentials(): boolean {
   ].some((value) => Boolean(value?.trim()));
 }
 
+export function resolveAiProviderFallbackBudgetMs(
+  operation: string,
+  requestedBudgetMs = DEFAULT_FALLBACK_BUDGET_MS,
+): number {
+  const cap = operation === "market_ai_daily_summary"
+    ? 24_000
+    : operation.startsWith("quant_")
+      ? 16_000
+      : 12_000;
+  return Math.max(1_000, Math.min(requestedBudgetMs, cap));
+}
+
 export async function withAiProviderFallback(
   request: AiProviderFallbackRequest,
 ): Promise<AiProviderResult> {
@@ -1199,12 +1211,9 @@ export async function withAiProviderFallback(
   }
 
   const failures: Array<{ provider: string; error: unknown }> = [];
-  const fallbackBudgetMs = Math.max(
-    1_000,
-    Math.min(
-      request.maxFallbackDurationMs ?? DEFAULT_FALLBACK_BUDGET_MS,
-      request.operation.startsWith("quant_") ? 16_000 : 12_000,
-    ),
+  const fallbackBudgetMs = resolveAiProviderFallbackBudgetMs(
+    request.operation,
+    request.maxFallbackDurationMs,
   );
   let fallbackDeadline: number | null = null;
   for (const [index, provider] of configuredProviders.entries()) {

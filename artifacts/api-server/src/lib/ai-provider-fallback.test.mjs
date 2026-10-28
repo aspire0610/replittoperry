@@ -4,6 +4,7 @@ import {
   AiProviderFallbackError,
   hasAiProviderCredentials,
   resolveOpenRouterModel,
+  resolveAiProviderFallbackBudgetMs,
   withAiProviderFallback,
 } from "./ai-provider-fallback.ts";
 import {
@@ -66,6 +67,13 @@ function makeRequest(operation, overrides = {}) {
     ...overrides,
   };
 }
+
+test("grants the market summary a longer but bounded provider fallback window", () => {
+  assert.equal(resolveAiProviderFallbackBudgetMs("market_ai_daily_summary", 24_000), 24_000);
+  assert.equal(resolveAiProviderFallbackBudgetMs("market_ai_daily_summary", 60_000), 24_000);
+  assert.equal(resolveAiProviderFallbackBudgetMs("quant_research_summary", 60_000), 16_000);
+  assert.equal(resolveAiProviderFallbackBudgetMs("ai-fallback-test-generic", 60_000), 12_000);
+});
 
 function chatResponse(content, status = 200) {
   return new Response(
