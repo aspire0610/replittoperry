@@ -1,0 +1,1 @@
+ALTER TABLE "paper_trading_automation" ADD COLUMN "futures_force_entry_enabled" boolean DEFAULT false NOT NULL;
