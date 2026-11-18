@@ -1,0 +1,1 @@
+ALTER TABLE "paper_trading_automation" ADD COLUMN "futures_entry_mode" text DEFAULT 'convergent' NOT NULL;

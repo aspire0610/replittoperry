@@ -1,0 +1,2 @@
+ALTER TABLE "paper_trading_automation" ADD COLUMN "futures_enabled" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "paper_trading_automation" ADD COLUMN "futures_contract" text DEFAULT 'TMF' NOT NULL;

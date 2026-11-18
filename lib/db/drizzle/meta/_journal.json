@@ -127,6 +127,34 @@
       "when": 1792413808212,
       "tag": "0017_thin_red_ghost",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1794934607413,
+      "tag": "0018_fresh_captain_midlands",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1794960731615,
+      "tag": "0019_little_lilandra",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1794964893203,
+      "tag": "0020_cute_bishop",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1794966596332,
+      "tag": "0021_big_gorilla_man",
+      "breakpoints": true
     }
   ]
 }
