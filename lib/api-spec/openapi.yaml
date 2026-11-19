@@ -60,7 +60,7 @@ paths:
       operationId: getFuturesAiDayStrategy
       tags: [market]
       summary: Get a Taiwan index futures day-session strategy
-      description: Returns an intraday futures assessment using current session quotes and available TAIEX context. It does not invent intraday futures bars or exact order prices.
+      description: Returns an intraday futures assessment using fresh synchronized day-session futures and TAIEX context. When action is wait, it still returns subjective conditional entry, stop, and target levels when live price evidence is available. An immediate entry reference must equal the fresh futures quote; stale quotes are never substituted.
       responses:
         "200":
           description: Day-session futures strategy
@@ -80,6 +80,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /futures/day-intraday:
+    get:
+      operationId: getFuturesDayIntraday
+      tags: [market]
+      summary: Get observed Taiwan index futures day-session minute bars
+      description: Returns observed session minute bars and locally calculated KD, plus the 15 most recent complete official TAIFEX TX day-session OHLC bars and their daily ATR14/4.
+      responses:
+        "200":
+          description: Observed futures minute data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FuturesDayIntraday"
   /market/summary:
     get:
       operationId: getMarketSummary
@@ -219,6 +232,55 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "502":
           description: Market data provider unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /stocks/ai-monitor:
+    get:
+      operationId: getStockAiMonitor
+      tags: [stocks]
+      summary: Get categorized Taiwan stock and active ETF monitor data
+      responses:
+        "200":
+          description: Sourced category results with explicit coverage
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockAiMonitorResponse"
+        "502":
+          description: Market data provider unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /stocks/intraday:
+    get:
+      operationId: getStockIntraday
+      tags: [stocks]
+      summary: Get verified one-minute candles for a Taiwan stock
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^[A-Za-z0-9]{4,6}$"
+      responses:
+        "200":
+          description: Fugle sourced one-minute stock candles
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockIntradayResponse"
+        "400":
+          description: Invalid symbol
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Intraday provider unavailable or inconsistent
           content:
             application/json:
               schema:
@@ -381,7 +443,7 @@ paths:
       operationId: getStockAiAssessment
       tags: [stocks]
       summary: Get AI-assisted Taiwan stock assessment
-      description: Evaluates the latest provider-sourced quote and exchange daily indicators, with conditional technical price references when validated. Includes a separate fixed-rule historical strategy backtest; this is not the AI recommendation's win rate or investment advice.
+      description: Evaluates the latest provider-sourced quote and exchange daily indicators, with conditional technical price references when validated. With entryMode=current_price, judges whether the latest verified trade is suitable for short-term entry and requires the entry reference to match that quote. Includes a separate fixed-rule historical strategy backtest; this is not the AI recommendation's win rate or investment advice.
       parameters:
         - name: symbol
           in: query
@@ -389,6 +451,13 @@ paths:
           schema:
             type: string
             pattern: "^[A-Za-z0-9]{4,6}(\\.(TW|TWO))?$"
+        - name: entryMode
+          in: query
+          required: false
+          description: Use the verified current trade as the AI's conditional entry reference for monitoring.
+          schema:
+            type: string
+            enum: [current_price]
       responses:
         "200":
           description: AI-assisted stock outlook and conditional action guidance
@@ -1347,6 +1416,97 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /account/paper-trading/automation:
+    get:
+      operationId: getAccountPaperTradingAutomation
+      tags: [quant]
+      summary: Get the signed-in user's autonomous paper-trading state
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Simulation settings, positions, pending entries, and event history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaperAutomationDashboard"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: putAccountPaperTradingAutomation
+      tags: [quant]
+      summary: Create or update autonomous paper-trading risk settings
+      description: Updates a paper-only simulation account. It never connects to a broker or sends real orders.
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaperAutomationSettingsInput"
+      responses:
+        "200":
+          description: Saved simulation settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaperAutomationDashboard"
+        "201":
+          description: Created simulation account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaperAutomationDashboard"
+        "400":
+          description: Invalid settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /account/paper-trading/automation/status:
+    patch:
+      operationId: patchAccountPaperTradingAutomationStatus
+      tags: [quant]
+      summary: Enable or pause autonomous paper trading
+      description: Simulated orders only. Enabling requires either an active stock research agent or Taiwan futures automation.
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaperAutomationStatusInput"
+      responses:
+        "200":
+          description: Updated simulation status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaperAutomationDashboard"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Account or active research agent is missing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /account/paper-trading/reset:
     post:
       operationId: postAccountPaperTradingReset
@@ -1701,7 +1861,7 @@ components:
       required: [symbol, status, processedForecastCount, requiredForecastCount, directionSampleCount, directionCorrectCount, programBaselineSampleCount, programBaselineCorrectCount, programBaselineHitRatePercent, calibrationSampleCount, meanForecastProbabilityPercent, calibrationGapPercent, directionLowerBoundPercent, pricePlanSampleCount, pricePlanTargetFirstCount, pricePlanLowerBoundPercent, qualified, message]
     FuturesAiDayStrategy:
       type: object
-      required: [status, action, summary, entryCondition, invalidationCondition, riskNote, aiProvider, dataCoverage, dayQuote, nightQuote, taiexQuote, analyzedAt, disclaimer]
+      required: [status, action, summary, entryCondition, invalidationCondition, riskNote, entryPlanStatus, entryPlanMode, planDirection, entryPrice, stopLossPrice, targetPrice, entryReason, stopLossReason, targetReason, entryPlanMessage, aiProvider, dataCoverage, dayQuote, nightQuote, taiexQuote, analyzedAt, disclaimer]
       properties:
         status:
           type: string
@@ -1721,9 +1881,27 @@ components:
         riskNote:
           type: string
           maxLength: 180
+        entryPlanStatus:
+          type: string
+          enum: [available, unavailable]
+        entryPlanMode:
+          type: string
+          enum: [current, conditional, reference]
+        planDirection:
+          type: ["string", "null"]
+          enum: [long, short, null]
+        entryPrice: { type: ["number", "null"], exclusiveMinimum: 0 }
+        stopLossPrice: { type: ["number", "null"], exclusiveMinimum: 0 }
+        targetPrice: { type: ["number", "null"], exclusiveMinimum: 0 }
+        entryReason: { type: ["string", "null"], maxLength: 160 }
+        stopLossReason: { type: ["string", "null"], maxLength: 160 }
+        targetReason: { type: ["string", "null"], maxLength: 160 }
+        entryPlanMessage:
+          type: string
+          maxLength: 180
         aiProvider:
           type: ["string", "null"]
-          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, nvidia_nim, null]
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, replit, nvidia_nim, null]
         dataCoverage:
           type: string
           enum: [quote_only, unavailable]
@@ -1739,6 +1917,71 @@ components:
         disclaimer:
           type: string
           maxLength: 220
+    FuturesDayIntraday:
+      type: object
+      required: [status, symbol, date, bars, k, d, signal, price, change, changePercent, asOf, source, dailyHistory]
+      properties:
+        status:
+          type: string
+          enum: [live, warming_up, closed, unavailable]
+        symbol:
+          type: ["string", "null"]
+        date:
+          type: string
+          pattern: "^\\d{8}$"
+        bars:
+          type: array
+          items:
+            $ref: "#/components/schemas/FuturesMinuteBar"
+        k: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        d: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        signal:
+          type: string
+          enum: [bullish_cross, bearish_cross, no_cross, insufficient]
+        price: { type: ["number", "null"], exclusiveMinimum: 0 }
+        change: { type: ["number", "null"] }
+        changePercent: { type: ["number", "null"] }
+        asOf:
+          type: ["string", "null"]
+          format: date-time
+        source: { type: string }
+        dailyHistory:
+          $ref: "#/components/schemas/FuturesDailyHistory"
+    FuturesDailyHistory:
+      type: object
+      required: [status, bars, atr14, atr14By4, asOf, source]
+      properties:
+        status:
+          type: string
+          enum: [available, insufficient, unavailable]
+        bars:
+          type: array
+          items:
+            $ref: "#/components/schemas/FuturesDailyBar"
+        atr14: { type: ["number", "null"], exclusiveMinimum: 0 }
+        atr14By4: { type: ["number", "null"], exclusiveMinimum: 0 }
+        asOf:
+          type: ["string", "null"]
+        source: { type: string }
+    FuturesDailyBar:
+      type: object
+      required: [date, contractMonth, open, high, low, close]
+      properties:
+        date: { type: string, pattern: "^\\d{4}-\\d{2}-\\d{2}$" }
+        contractMonth: { type: string, pattern: "^\\d{6}$" }
+        open: { type: number, exclusiveMinimum: 0 }
+        high: { type: number, exclusiveMinimum: 0 }
+        low: { type: number, exclusiveMinimum: 0 }
+        close: { type: number, exclusiveMinimum: 0 }
+    FuturesMinuteBar:
+      type: object
+      required: [time, open, high, low, close]
+      properties:
+        time: { type: string, format: date-time }
+        open: { type: number, exclusiveMinimum: 0 }
+        high: { type: number, exclusiveMinimum: 0 }
+        low: { type: number, exclusiveMinimum: 0 }
+        close: { type: number, exclusiveMinimum: 0 }
     MarketQuote:
       type: object
       properties:
@@ -1908,19 +2151,24 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MarketNewsSource"
+        officialEventSources:
+          type: array
+          description: Official calendars queried directly, separate from unverified news search results.
+          items:
+            $ref: "#/components/schemas/MarketNewsSource"
         summary:
           type: ["string", "null"]
           maxLength: 500
         aiProvider:
           type: ["string", "null"]
-          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, nvidia_nim, null]
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, replit, nvidia_nim, null]
         analyzedAt:
           type: ["string", "null"]
           format: date-time
         error:
           type: ["string", "null"]
           maxLength: 320
-      required: [status, marketDate, source, quoteAsOf, newsSearchStatus, newsSources, summary, aiProvider, analyzedAt, error]
+      required: [status, marketDate, source, quoteAsOf, newsSearchStatus, newsSources, officialEventSources, summary, aiProvider, analyzedAt, error]
     MarketNewsSource:
       type: object
       properties:
@@ -2034,6 +2282,69 @@ components:
           items:
             $ref: "#/components/schemas/OhlcBar"
       required: [symbol, ticker, source, currency, range, asOf, quote, bars]
+    StockAiMonitorItem:
+      type: object
+      additionalProperties: false
+      properties:
+        symbol: { type: string }
+        ticker: { type: string }
+        name: { type: string }
+        exchange: { type: string, enum: [twse, tpex] }
+        price: { type: number, minimum: 0 }
+        changePercent: { type: ["number", "null"] }
+        force: { type: ["number", "null"], minimum: -100, maximum: 100 }
+        status: { type: string, enum: [多方轉強, 偏多, 多空拉鋸, 偏空, 空方轉強, 資料不足] }
+        signal: { type: string }
+        asOf: { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        source: { type: string }
+        forceDefinition: { type: string }
+      required: [symbol, ticker, name, exchange, price, changePercent, force, status, signal, asOf, source, forceDefinition]
+    StockAiMonitorCategory:
+      type: object
+      additionalProperties: false
+      properties:
+        id: { type: string, enum: [yesterday_strength, active_etf, candlestick, five_day_strength, ten_day_strength, bollinger_expansion, trend, surge, ma_cluster_breakout, break_five_day_average] }
+        label: { type: string }
+        count: { type: integer, minimum: 0 }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/StockAiMonitorItem" }
+      required: [id, label, count, items]
+    StockAiMonitorCoverage:
+      type: object
+      additionalProperties: false
+      properties:
+        universe: { type: integer, minimum: 0 }
+        withHistory: { type: integer, minimum: 0 }
+        partial: { type: boolean }
+      required: [universe, withHistory, partial]
+    StockAiMonitorResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        marketDate: { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        analyzedAt: { type: string, format: date-time }
+        source: { type: string }
+        coverage: { $ref: "#/components/schemas/StockAiMonitorCoverage" }
+        categories:
+          type: array
+          items: { $ref: "#/components/schemas/StockAiMonitorCategory" }
+      required: [marketDate, analyzedAt, source, coverage, categories]
+    StockIntradayResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        symbol: { type: string }
+        ticker: { type: string }
+        date: { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        timeframe: { type: string, enum: ["1m"] }
+        sessionType: { type: string, enum: [live, historical] }
+        source: { type: string }
+        asOf: { type: string, format: date-time }
+        bars:
+          type: array
+          items: { $ref: "#/components/schemas/MarketIntradayBar" }
+      required: [symbol, ticker, date, timeframe, sessionType, source, asOf, bars]
     StockCatalog:
       type: object
       additionalProperties: false
@@ -2077,6 +2388,9 @@ components:
         name: { type: string }
         exchangeName: { type: string, enum: [上市, 上櫃] }
         price: { type: ["number", "null"], minimum: 0 }
+        latestPrice: { type: ["number", "null"], minimum: 0 }
+        latestPriceSource: { type: string }
+        latestPriceAsOf: { type: ["string", "null"] }
         marketPrice: { type: ["number", "null"], minimum: 0 }
         netAssetValue: { type: ["number", "null"], minimum: 0 }
         discountPremiumAmount: { type: ["number", "null"] }
@@ -2085,23 +2399,24 @@ components:
         distributions:
           type: array
           items: { $ref: "#/components/schemas/EtfDistribution" }
-        trailing12MonthDividend: { type: number, minimum: 0 }
+        trailing12MonthDividend: { type: ["number", "null"], minimum: 0 }
         trailing12MonthYieldPercent: { type: ["number", "null"], minimum: 0 }
         latestDistribution: { type: ["number", "null"], minimum: 0 }
         frequency: { type: string }
-      required: [symbol, ticker, name, exchangeName, price, marketPrice, netAssetValue, discountPremiumAmount, discountPremiumPercent, navUpdatedAt, distributions, trailing12MonthDividend, trailing12MonthYieldPercent, latestDistribution, frequency]
+      required: [symbol, ticker, name, exchangeName, price, latestPrice, latestPriceSource, latestPriceAsOf, marketPrice, netAssetValue, discountPremiumAmount, discountPremiumPercent, navUpdatedAt, distributions, trailing12MonthDividend, trailing12MonthYieldPercent, latestDistribution, frequency]
     EtfMarket:
       type: object
       additionalProperties: false
       properties:
         asOf: { type: string }
         source: { type: string }
+        distributionDataStatus: { type: string, enum: [available, unavailable] }
         navDataStatus: { type: string, enum: [available, partial, unavailable] }
         navDataUpdatedAt: { type: ["string", "null"], format: date-time }
         instruments:
           type: array
           items: { $ref: "#/components/schemas/EtfMarketInstrument" }
-      required: [asOf, source, navDataStatus, navDataUpdatedAt, instruments]
+      required: [asOf, source, distributionDataStatus, navDataStatus, navDataUpdatedAt, instruments]
     StockAiPicksProgress:
       type: object
       additionalProperties: false
@@ -2176,7 +2491,7 @@ components:
           description: Whether a final AI selection batch was actually executed.
         aiProvider:
           type: string
-          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, nvidia_nim]
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, replit, nvidia_nim]
         watchlist:
           type: array
           maxItems: 5
@@ -2542,7 +2857,7 @@ components:
           type: string
         aiProvider:
           type: ["string", "null"]
-          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, nvidia_nim, rule_based, null]
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, replit, nvidia_nim, rule_based, null]
         source:
           type: string
         quoteAsOf:
@@ -2967,7 +3282,7 @@ components:
           format: date-time
         aiProvider:
           type: string
-          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, nvidia_nim]
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, replit, nvidia_nim]
         verdict:
           type: string
           enum: [buy, do_not_buy]
@@ -3017,7 +3332,7 @@ components:
           type: string
         aiProvider:
           type: string
-          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, nvidia_nim]
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, replit, nvidia_nim]
         answer:
           type: string
           maxLength: 1600
@@ -3231,10 +3546,10 @@ components:
         answer:
           type: string
           minLength: 1
-          maxLength: 420
+          maxLength: 1500
         aiProvider:
           type: string
-          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, nvidia_nim, rule_based]
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, replit, nvidia_nim, rule_based]
         searchStatus:
           type: string
           enum: [searched, not_needed, unavailable]
@@ -3296,7 +3611,7 @@ components:
           maxLength: 1800
         aiProvider:
           type: string
-          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, nvidia_nim, rule_based]
+          enum: [openai, 1min_ai, agnes_ai, groq, ollama, openrouter, gemini, replit, nvidia_nim, rule_based]
         citedFacts:
           type: array
           maxItems: 5
@@ -3632,7 +3947,7 @@ components:
           $ref: "#/components/schemas/QuantStrategy"
         aiProvider:
           type: string
-          enum: [gemini, 1min_ai, agnes_ai, groq, ollama, openrouter, openai, nvidia_nim]
+          enum: [gemini, 1min_ai, agnes_ai, groq, ollama, openrouter, openai, replit, nvidia_nim]
         summary:
           type: string
           minLength: 8
@@ -3979,8 +4294,8 @@ components:
           $ref: "#/components/schemas/QuantDataCoverage"
         aiProvider:
           type: string
-          # OpenRouter remains for historical saved runs; Groq Free joins new quant runs.
-          enum: [gemini, 1min_ai, agnes_ai, groq, ollama, openrouter, nvidia_nim]
+          # OpenRouter remains for historical saved runs; Vercel production may use Replit after Gemini.
+          enum: [gemini, 1min_ai, agnes_ai, groq, ollama, openrouter, replit, nvidia_nim]
         createdAt:
           type: string
           format: date-time
@@ -4054,6 +4369,211 @@ components:
           minimum: 100000
           maximum: 100000000
       required: [startingCash]
+    PaperAutomationSettingsInput:
+      type: object
+      additionalProperties: false
+      properties:
+        startingCash:
+          type: number
+          minimum: 100000
+          maximum: 100000000
+        riskPerTradePercent:
+          type: number
+          minimum: 0.1
+          maximum: 1
+        dailyLossLimitPercent:
+          type: number
+          minimum: 0.5
+          maximum: 5
+        maxOpenPositions:
+          type: integer
+          minimum: 1
+          maximum: 5
+        futuresEnabled:
+          type: boolean
+        futuresContract:
+          type: string
+          enum: [TX, MTX, TMF]
+        futuresEntryMode:
+          type: string
+          enum: [aggressive, convergent]
+        futuresForceEntryEnabled:
+          type: boolean
+      required: [startingCash, riskPerTradePercent, dailyLossLimitPercent, maxOpenPositions, futuresEnabled, futuresContract, futuresEntryMode]
+    PaperAutomationStatusInput:
+      type: object
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+      required: [enabled]
+    PaperAutomationPosition:
+      type: object
+      additionalProperties: false
+      properties:
+        id: { type: string }
+        agentId: { type: string }
+        ticker: { type: string }
+        name: { type: string }
+        shares: { type: integer }
+        assetClass:
+          type: string
+          enum: [equity, futures]
+        contractType:
+          type: string
+          enum: [TX, MTX, TMF]
+        direction:
+          type: string
+          enum: [long, short]
+        contractMultiplier: { type: number }
+        entryPrice: { type: number }
+        stopLossPrice: { type: number }
+        takeProfitPrice: { type: number }
+        entryAt: { type: string, format: date-time }
+        signalAsOf: { type: string, format: date-time }
+        quoteSource: { type: string }
+        lastPrice: { type: number }
+        lastQuoteAt: { type: string, format: date-time }
+      required: [id, agentId, ticker, name, shares, entryPrice, stopLossPrice, takeProfitPrice, entryAt, signalAsOf, quoteSource, lastPrice, lastQuoteAt]
+    PaperAutomationPendingEntry:
+      type: object
+      additionalProperties: false
+      properties:
+        id: { type: string }
+        agentId: { type: string }
+        ticker: { type: string }
+        name: { type: string }
+        assetClass:
+          type: string
+          enum: [equity, futures]
+        contractType:
+          type: string
+          enum: [TX, MTX, TMF]
+        direction:
+          type: string
+          enum: [long, short]
+        contractMultiplier: { type: number }
+        forcedEntry: { type: boolean }
+        entryPrice: { type: number }
+        stopLossPrice: { type: number }
+        takeProfitPrice: { type: number }
+        signalAsOf: { type: string, format: date-time }
+        marketDate: { type: string, format: date }
+        expiresAt: { type: string, format: date-time }
+      required: [id, agentId, ticker, name, entryPrice, stopLossPrice, takeProfitPrice, signalAsOf, marketDate, expiresAt]
+    PaperAutomationEvent:
+      type: object
+      additionalProperties: false
+      properties:
+        id: { type: string }
+        agentId: { type: ["string", "null"] }
+        ticker: { type: ["string", "null"] }
+        assetClass:
+          type: string
+          enum: [equity, futures]
+        contractType:
+          type: string
+          enum: [TX, MTX, TMF]
+        direction:
+          type: string
+          enum: [long, short]
+        contracts: { type: ["integer", "null"] }
+        exitReason:
+          type: string
+          enum: [take_profit, stop_loss, session_end]
+        entryPrice: { type: number }
+        stopLossPrice: { type: number }
+        realizedPnl: { type: number }
+        kind: { type: string, enum: [signal_queued, entry_filled, exit_filled, skipped, halted] }
+        side: { type: ["string", "null"], enum: [buy, sell, null] }
+        shares: { type: ["integer", "null"] }
+        price: { type: ["number", "null"] }
+        asOf: { type: string, format: date-time }
+        reason: { type: string }
+      required: [id, agentId, ticker, kind, side, shares, price, asOf, reason]
+    PaperFuturesEvaluation:
+      type: object
+      additionalProperties: false
+      properties:
+        id: { type: string }
+        asOf: { type: string, format: date-time }
+        status: { type: string, enum: [ready, waiting, blocked, unavailable, inactive] }
+        action:
+          type: ["string", "null"]
+          enum: [long, short, wait, insufficient, null]
+        direction:
+          type: ["string", "null"]
+          enum: [long, short, null]
+        price: { type: ["number", "null"] }
+        entryPrice: { type: ["number", "null"] }
+        stopLossPrice: { type: ["number", "null"] }
+        targetPrice: { type: ["number", "null"] }
+        reason: { type: string }
+      required: [id, asOf, status, action, direction, price, entryPrice, stopLossPrice, targetPrice, reason]
+    PaperFuturesPerformance:
+      type: object
+      additionalProperties: false
+      properties:
+        closedTrades: { type: integer }
+        wins: { type: integer }
+        losses: { type: integer }
+        breakeven: { type: integer }
+        realizedPnl: { type: number }
+        winRatePercent: { type: ["number", "null"] }
+        consecutiveStopLosses: { type: integer }
+        adjustmentStatus: { type: string, enum: [idle, pending, applied] }
+        adjustmentAt: { type: ["string", "null"], format: date-time }
+        adjustmentMessage: { type: string }
+      required: [closedTrades, wins, losses, breakeven, realizedPnl, winRatePercent, consecutiveStopLosses, adjustmentStatus, adjustmentAt, adjustmentMessage]
+    PaperAutomationDashboard:
+      type: object
+      additionalProperties: false
+      properties:
+        initialized: { type: boolean }
+        enabled: { type: boolean }
+        startingCash: { type: ["number", "null"] }
+        cash: { type: ["number", "null"] }
+        equity: { type: ["number", "null"] }
+        riskPerTradePercent: { type: number }
+        dailyLossLimitPercent: { type: number }
+        maxOpenPositions: { type: integer }
+        futuresEnabled: { type: boolean }
+        futuresContract:
+          type: string
+          enum: [TX, MTX, TMF]
+        futuresEntryMode:
+          type: string
+          enum: [aggressive, convergent]
+        futuresForceEntryEnabled: { type: boolean }
+        dailyStopTriggered: { type: boolean }
+        dailyStartEquity: { type: ["number", "null"] }
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaperAutomationPosition"
+        pendingEntries:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaperAutomationPendingEntry"
+        events:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/PaperAutomationEvent"
+        currentFuturesEvaluation:
+          oneOf:
+            - $ref: "#/components/schemas/PaperFuturesEvaluation"
+            - type: "null"
+        futuresDecisionLogs:
+          type: array
+          maxItems: 25
+          items:
+            $ref: "#/components/schemas/PaperFuturesEvaluation"
+        futuresPerformance:
+          $ref: "#/components/schemas/PaperFuturesPerformance"
+        lastProcessedAt: { type: ["string", "null"], format: date-time }
+        disclaimer: { type: string }
+      required: [initialized, enabled, startingCash, cash, equity, riskPerTradePercent, dailyLossLimitPercent, maxOpenPositions, futuresEnabled, futuresContract, futuresEntryMode, futuresForceEntryEnabled, dailyStopTriggered, dailyStartEquity, positions, pendingEntries, events, currentFuturesEvaluation, futuresDecisionLogs, futuresPerformance, lastProcessedAt, disclaimer]
     PaperTradeInput:
       type: object
       additionalProperties: false

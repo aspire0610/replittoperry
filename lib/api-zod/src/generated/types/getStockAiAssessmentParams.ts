@@ -5,10 +5,15 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { GetStockAiAssessmentEntryMode } from './getStockAiAssessmentEntryMode';
 
 export type GetStockAiAssessmentParams = {
 /**
  * @pattern ^[A-Za-z0-9]{4,6}(\.(TW|TWO))?$
  */
 symbol: string;
+/**
+ * Use the verified current trade as the AI's conditional entry reference for monitoring.
+ */
+entryMode?: GetStockAiAssessmentEntryMode;
 };

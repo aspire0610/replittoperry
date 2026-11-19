@@ -14,6 +14,10 @@ import {
   saveStockResearchAgentReport,
 } from "./lib/ai-stock-research-agents";
 import {
+  queuePaperAutomationSignal,
+  runPaperTradingAutomationCycle,
+} from "./lib/paper-trading-automation.js";
+import {
   claimQueuedResearchJob,
   requeueStaleResearchJobs,
   updateResearchJob,
@@ -27,6 +31,20 @@ import {
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 let stopped = false;
+let paperAutomationCycleRunning = false;
+
+const paperAutomationTimer = setInterval(() => {
+  if (paperAutomationCycleRunning || stopped) return;
+  paperAutomationCycleRunning = true;
+  void runPaperTradingAutomationCycle()
+    .catch((error) => {
+      logger.error({ err: error }, "Paper trading automation monitoring cycle failed");
+    })
+    .finally(() => {
+      paperAutomationCycleRunning = false;
+    });
+}, 15_000);
+paperAutomationTimer.unref();
 
 async function processJob(id: number): Promise<void> {
   await updateMarketWideAiPickScanJob(id, { status: "running", stage: "market_data", startedAt: new Date() });
@@ -137,6 +155,16 @@ async function processStockResearchAgent(agent: NonNullable<Awaited<ReturnType<t
       answer: result.answer,
       assessment: JSON.parse(JSON.stringify(result)) as Record<string, unknown>,
     });
+    const assessment = await getCachedStockAiAssessment(agent.symbol);
+    if (assessment) {
+      await queuePaperAutomationSignal({
+        userId: agent.userId,
+        agentId: agent.id,
+        ticker: assessment.ticker,
+        name: agent.name,
+        assessment,
+      });
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "研究服務暫時無法使用";
     const cachedAssessment = await getCachedStockAiAssessment(agent.symbol);

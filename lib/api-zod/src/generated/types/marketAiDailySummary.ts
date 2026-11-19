@@ -18,6 +18,8 @@ export interface MarketAiDailySummary {
   quoteAsOf: Date | null;
   newsSearchStatus: MarketAiDailySummaryNewsSearchStatus;
   newsSources: MarketNewsSource[];
+  /** Official calendars queried directly, separate from unverified news search results. */
+  officialEventSources: MarketNewsSource[];
   /**
      * @maxLength 500
      * @nullable

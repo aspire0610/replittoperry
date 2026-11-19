@@ -13,6 +13,7 @@ import {
 import { evaluateChipExhaustion } from "./lib/chip-exhaustion";
 import { splitAssistantAnswer } from "./lib/assistant-chat-format";
 import {
+  MAX_VERIFIED_STOCK_TRADE_AGE_MS,
   getStockQuoteDisplayStatus,
   getStockQuoteFallbackReason,
 } from "./lib/stock-quote-display";
@@ -116,6 +117,7 @@ import AiPicksPage from "@/pages/ai-picks";
 import { ResearchOfficePage, type ResearchJob as ResearchOfficeJob } from "@/pages/research-office";
 import SystemSettingsPage from "@/pages/system-settings";
 import EtfSavingsPage from "@/pages/etf-savings";
+import PaperAutotraderPage from "@/pages/paper-autotrader";
 import NotFound from "@/pages/not-found";
 
 type Range = "1mo" | "3mo" | "6mo" | "1y";
@@ -557,12 +559,14 @@ function WorkspaceCard({
           type="button"
           className="card-collapse-trigger"
           onClick={onToggle}
-          aria-label={`收起「${title}」`}
+          aria-label={`${collapsed ? "展開" : "收起"}「${title}」`}
           aria-expanded="true"
           aria-controls={`card-content-${cardId}`}
+          title={title}
           data-testid={`button-toggle-${cardId}`}
         >
-          <span>{title}</span>
+          <span className="card-title-icon" aria-hidden="true"><WorkspaceCardIcon cardId={cardId} /></span>
+          <span className="card-title-label">{title}</span>
           <ChevronUp size={15} />
         </button>
         {toolbarAction && (
@@ -643,6 +647,37 @@ function EmptyState({ title, detail }: { title: string; detail: string }) {
       <div><strong>{title}</strong><p>{detail}</p></div>
     </div>
   );
+}
+
+function WorkspaceCardIcon({ cardId }: { cardId: CardId }) {
+  switch (cardId) {
+    case "stock-search":
+      return <Search size={14} aria-hidden="true" />;
+    case "market-index":
+      return <LayoutDashboard size={14} aria-hidden="true" />;
+    case "market-intraday":
+      return <Activity size={14} aria-hidden="true" />;
+    case "market-analysis":
+    case "market-history":
+    case "price-chart":
+    case "volume-chart":
+      return <BarChart3 size={14} aria-hidden="true" />;
+    case "stock-analysis":
+    case "stock-metrics":
+      return <Briefcase size={14} aria-hidden="true" />;
+    case "market-summary":
+      return <Activity size={14} aria-hidden="true" />;
+    case "futures-strategy":
+      return <Target size={14} aria-hidden="true" />;
+    case "research-data":
+      return <FlaskConical size={14} aria-hidden="true" />;
+    case "ai-assessment":
+      return <Sparkles size={14} aria-hidden="true" />;
+    case "calculator":
+      return <Calculator size={14} aria-hidden="true" />;
+    case "technical-ledger":
+      return <Info size={14} aria-hidden="true" />;
+  }
 }
 
 function MarketPrice({ price, available }: { price: number | null; available: boolean }) {
@@ -1574,7 +1609,7 @@ function SummaryPanel({
           </div>
           <section className="market-checklist" data-testid="market-direction-checklist">
             <div className="market-checklist-heading">
-              <div><h3>盤中多空檢查表</h3><small>每 15 秒更新 · 日線資料日 {formatDate(summary.checklist.marketDate)} · 更新於 {formatTime(summary.checklist.analyzedAt)}</small></div>
+              <div><h3>{summary.checklist.conclusionText.startsWith("盤前參考") ? "盤前多空檢查表" : summary.checklist.conclusionText.startsWith("收盤參考") ? "收盤多空檢查表" : "盤中多空檢查表"}</h3><small>每 15 秒更新 · 日線資料日 {formatDate(summary.checklist.marketDate)} · 更新於 {formatTime(summary.checklist.analyzedAt)}</small></div>
               <span className={`status-pill ${summary.checklist.conclusion}`}>{checklistLabel}</span>
             </div>
             <p className="market-checklist-conclusion">{summary.checklist.conclusionText}</p>
@@ -1595,9 +1630,9 @@ function SummaryPanel({
                     {sources.length > 0 && <div className="market-checklist-event-sources">
                       {sources.map((source) => <a key={source.url} href={source.url} target="_blank" rel="noopener noreferrer">{source.title}</a>)}
                     </div>}
-                    <small>{item.source ?? (isEvents ? "搜尋來源未提供" : "來源資料不足")}{item.observedAt ? ` · ${formatTime(item.observedAt)}` : ""}</small>
+                    <small>{item.source ?? (isEvents ? "搜尋來源未提供" : "來源資料不足")}{item.observedAt ? ` · ${/^\d{4}-\d{2}-\d{2}$/.test(item.observedAt) ? item.observedAt : formatTime(item.observedAt)}` : ""}</small>
                   </div>
-                  <b className={`market-checklist-signal ${signal}`}>{isEvents ? sources.length ? "已找到" : item.source?.includes("暫不可用") ? "搜尋失敗" : "未找到" : signalLabel(signal)}</b>
+                  <b className={`market-checklist-signal ${signal}`}>{isEvents ? sources.length ? "已找到" : item.source?.includes("暫不可用") ? "搜尋失敗" : "未找到" : signal === "unavailable" && item.detail.includes("官方尚未公布") ? "待公布" : signal === "unavailable" && item.detail.includes("前次收盤參考") ? "收盤參考" : signalLabel(signal)}</b>
                     </>;
                   })()}
                 </div>
@@ -1739,6 +1774,7 @@ type AiProviderId =
   | "ollama"
   | "openrouter"
   | "gemini"
+  | "replit"
   | "nvidia_nim"
   | "rule_based"
   | null
@@ -1764,6 +1800,7 @@ function AiProviderBadge({
     ollama: "Ollama",
     openrouter: "OpenRouter",
     gemini: "Gemini Flash-Lite",
+    replit: "Replit AI",
     nvidia_nim: "NVIDIA NIM",
     rule_based: "固定規則",
   } as const;
@@ -2655,7 +2692,7 @@ function FuturesAiDayStrategyPanel({
           title="AI 分析暫時無法完成"
         />
       ) : !strategy ? (
-        <EmptyState title="目前沒有臺指期分析" detail="暫時沒有可用的日盤價格，請稍後再試。" />
+        <EmptyState title="尚未請求臺指期分析" detail="只有按下「更新分析」後才會送出 AI 判讀；目前不會自動呼叫。" />
       ) : (
         <>
           <div className={`futures-strategy-verdict action-${strategy.action}`}>
@@ -4062,13 +4099,8 @@ function Dashboard() {
   });
   const futuresDayStrategyQuery = useGetFuturesAiDayStrategy({
     query: {
-      enabled: isSignedIn,
+      enabled: false,
       queryKey: ["/api/futures/ai-day-strategy"],
-      staleTime: 60_000,
-      refetchInterval: 3 * 60_000,
-      refetchIntervalInBackground: false,
-      refetchOnMount: "always",
-      refetchOnWindowFocus: false,
       retry: false,
     },
   });
@@ -4206,11 +4238,10 @@ function Dashboard() {
     latestStockQuote?.available &&
       latestStockQuote.price !== null &&
       latestStockQuote.asOf &&
-      (latestStockQuote.source.includes("成交時間") ||
-        latestStockQuote.source.includes("報價更新時間")) &&
+      latestStockQuote.source.includes("成交時間") &&
       !latestStockQuote.source.includes("盤後最後成交") &&
       latestStockQuoteAgeMs >= -60_000 &&
-      latestStockQuoteAgeMs <= 90_000,
+      latestStockQuoteAgeMs <= MAX_VERIFIED_STOCK_TRADE_AGE_MS,
   );
   const aiAssessmentQuoteAgeMs = rawStockAiAssessment?.quoteAsOf
     ? Date.now() - Date.parse(rawStockAiAssessment.quoteAsOf)
@@ -4221,7 +4252,7 @@ function Dashboard() {
       (rawStockAiAssessment.referenceType !== "verified_trade" ||
         !Number.isFinite(aiAssessmentQuoteAgeMs) ||
         aiAssessmentQuoteAgeMs < -60_000 ||
-        aiAssessmentQuoteAgeMs > 90_000),
+        aiAssessmentQuoteAgeMs > MAX_VERIFIED_STOCK_TRADE_AGE_MS),
   );
   const visibleStockAiAssessment =
     rawStockAiAssessment &&
@@ -5042,7 +5073,7 @@ function MarketHistoryChart({ bars, dark, compact }: { bars: Bar[]; dark: boolea
   );
 }
 
-function PageNavigation({ active }: { active: "dashboard" | "aiPicks" | "watchlist" | "portfolio" | "etfSavings" | "quantLab" | "research" | "systemSettings" }) {
+function PageNavigation({ active }: { active: "dashboard" | "aiPicks" | "watchlist" | "portfolio" | "etfSavings" | "quantLab" | "paperAutotrader" | "research" | "systemSettings" }) {
   const { entries, profile, isSignedIn, isLoading, accountError } = useAccountWatchlist();
   const { signOut } = useClerk();
   const railNavRef = useRef<HTMLElement | null>(null);
@@ -5084,7 +5115,7 @@ function PageNavigation({ active }: { active: "dashboard" | "aiPicks" | "watchli
         <LayoutDashboard size={17} /><span>市場分析</span><small>01</small>
       </Link>
       <Link href="/ai-picks" className={`rail-link ${active === "aiPicks" ? "active" : ""}`} aria-current={active === "aiPicks" ? "page" : undefined} data-testid="link-nav-ai-picks">
-        <Sparkles size={17} /><span>AI 選股</span><small>02</small>
+        <Sparkles size={17} /><span>AI 盯盤</span><small>02</small>
       </Link>
       {isSignedIn && (
         <>
@@ -5100,8 +5131,11 @@ function PageNavigation({ active }: { active: "dashboard" | "aiPicks" | "watchli
           <Link href="/quant-lab" className={`rail-link ${active === "quantLab" ? "active" : ""}`} aria-current={active === "quantLab" ? "page" : undefined} data-testid="link-nav-quant-lab">
             <FlaskConical size={17} /><span>量化研究室</span><small>05</small>
           </Link>
+          <Link href="/paper-autotrader" className={`rail-link ${active === "paperAutotrader" ? "active" : ""}`} aria-current={active === "paperAutotrader" ? "page" : undefined} data-testid="link-nav-paper-autotrader">
+            <Activity size={17} /><span>紙上自動模擬</span><small>06</small>
+          </Link>
           <Link href="/research-office" className={`rail-link ${active === "research" ? "active" : ""}`} aria-current={active === "research" ? "page" : undefined} data-testid="link-nav-research-office">
-            <MessageCircle size={17} /><span>CEO 研究部</span><small>06</small>
+            <MessageCircle size={17} /><span>CEO 研究部</span><small>07</small>
           </Link>
         </>
       )}
@@ -5584,6 +5618,15 @@ function QuantLabRoute() {
   );
 }
 
+function PaperAutotraderRoute() {
+  return (
+    <div className="app-shell terminal-grid">
+      <PageNavigation active="paperAutotrader" />
+      <PaperAutotraderPage />
+    </div>
+  );
+}
+
 function SystemSettingsRoute() {
   return (
     <div className="app-shell terminal-grid">
@@ -5656,6 +5699,7 @@ function Router() {
           <Route path="/portfolio" component={PortfolioPage} />
           <Route path="/etf-savings" component={EtfSavingsRoute} />
           <Route path="/quant-lab" component={QuantLabRoute} />
+          <Route path="/paper-autotrader" component={PaperAutotraderRoute} />
           <Route path="/research-office" component={ResearchOfficeRoute} />
           <Route path="/system-settings" component={SystemSettingsRoute} />
           <Route path="/sign-in/*?" component={SignInPage} />

@@ -8,6 +8,9 @@
 import type { FuturesAiDayStrategyAction } from './futuresAiDayStrategyAction';
 import type { FuturesAiDayStrategyAiProvider } from './futuresAiDayStrategyAiProvider';
 import type { FuturesAiDayStrategyDataCoverage } from './futuresAiDayStrategyDataCoverage';
+import type { FuturesAiDayStrategyEntryPlanMode } from './futuresAiDayStrategyEntryPlanMode';
+import type { FuturesAiDayStrategyEntryPlanStatus } from './futuresAiDayStrategyEntryPlanStatus';
+import type { FuturesAiDayStrategyPlanDirection } from './futuresAiDayStrategyPlanDirection';
 import type { FuturesAiDayStrategyStatus } from './futuresAiDayStrategyStatus';
 import type { MarketQuote } from './marketQuote';
 
@@ -22,6 +25,42 @@ export interface FuturesAiDayStrategy {
   invalidationCondition: string;
   /** @maxLength 180 */
   riskNote: string;
+  entryPlanStatus: FuturesAiDayStrategyEntryPlanStatus;
+  entryPlanMode: FuturesAiDayStrategyEntryPlanMode;
+  /** @nullable */
+  planDirection: FuturesAiDayStrategyPlanDirection;
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  entryPrice: number | null;
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  stopLossPrice: number | null;
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  targetPrice: number | null;
+  /**
+     * @maxLength 160
+     * @nullable
+     */
+  entryReason: string | null;
+  /**
+     * @maxLength 160
+     * @nullable
+     */
+  stopLossReason: string | null;
+  /**
+     * @maxLength 160
+     * @nullable
+     */
+  targetReason: string | null;
+  /** @maxLength 180 */
+  entryPlanMessage: string;
   /** @nullable */
   aiProvider: FuturesAiDayStrategyAiProvider;
   dataCoverage: FuturesAiDayStrategyDataCoverage;

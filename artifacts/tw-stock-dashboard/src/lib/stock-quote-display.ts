@@ -1,5 +1,5 @@
-const FRESH_STOCK_QUOTE_MAX_AGE_MS = 90_000;
-const LAST_TRADE_DISPLAY_MAX_AGE_MS = 3 * 60_000;
+export const MAX_VERIFIED_STOCK_TRADE_AGE_MS = 3 * 60_000;
+const FRESH_QUOTE_UPDATE_MAX_AGE_MS = 90_000;
 
 export type StockQuoteDisplayInput = {
   available: boolean;
@@ -34,16 +34,15 @@ export function getStockQuoteDisplayStatus(
 
   const hasVerifiedTradeTime = quote.source.includes("成交時間");
   const maxAge = hasVerifiedTradeTime
-    ? LAST_TRADE_DISPLAY_MAX_AGE_MS
-    : FRESH_STOCK_QUOTE_MAX_AGE_MS;
+    ? MAX_VERIFIED_STOCK_TRADE_AGE_MS
+    : FRESH_QUOTE_UPDATE_MAX_AGE_MS;
   if (age > maxAge) {
     return { available: false, isDelayedLastTrade: false };
   }
 
   return {
     available: true,
-    isDelayedLastTrade:
-      hasVerifiedTradeTime && age > FRESH_STOCK_QUOTE_MAX_AGE_MS,
+    isDelayedLastTrade: false,
   };
 }
 

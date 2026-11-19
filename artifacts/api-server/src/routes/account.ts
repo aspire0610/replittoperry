@@ -6,6 +6,11 @@ import {
   GetAccountLineNotificationsResponse,
   GetAccountMeResponse,
   GetAccountPaperTradingResponse,
+  GetAccountPaperTradingAutomationResponse,
+  PutAccountPaperTradingAutomationBody,
+  PutAccountPaperTradingAutomationResponse,
+  PatchAccountPaperTradingAutomationStatusBody,
+  PatchAccountPaperTradingAutomationStatusResponse,
   GetAccountQuantResearchRunParams,
   GetAccountQuantResearchRunResponse,
   GetAccountQuantResearchRunsResponse,
@@ -91,6 +96,12 @@ import {
   recordPaperTrade,
   resetPaperTradingAccount,
 } from "../lib/paper-trading.js";
+import {
+  getPaperTradingAutomation,
+  PaperAutomationError,
+  savePaperTradingAutomationSettings,
+  setPaperTradingAutomationEnabled,
+} from "../lib/paper-trading-automation.js";
 import { QuantMarketDataError } from "../lib/quant-market-data.js";
 import {
   interpretQuantResearchHypothesis,
@@ -1601,6 +1612,70 @@ router.post(
         error,
         "模擬交易暫時無法記錄。",
       );
+    }
+  },
+);
+
+router.get(
+  "/account/paper-trading/automation",
+  async (req: Request, res: Response<unknown, AccountLocals>): Promise<void> => {
+    const account = res.locals.account;
+    if (!account) {
+      res.status(401).json({ error: "請先登入。" });
+      return;
+    }
+    try {
+      const dashboard = await getPaperTradingAutomation(account.user.id);
+      res.json(GetAccountPaperTradingAutomationResponse.parse(dashboard));
+    } catch (error) {
+      sendQuantOperationError(req, res, error, "自動模擬交易狀態暫時無法載入。");
+    }
+  },
+);
+
+router.put(
+  "/account/paper-trading/automation",
+  async (req: Request, res: Response<unknown, AccountLocals>): Promise<void> => {
+    const account = res.locals.account;
+    if (!account) {
+      res.status(401).json({ error: "請先登入。" });
+      return;
+    }
+    const parsed = PutAccountPaperTradingAutomationBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "自動模擬交易設定格式錯誤，請檢查本金與風控範圍。" });
+      return;
+    }
+    try {
+      const existing = await getPaperTradingAutomation(account.user.id);
+      const dashboard = await savePaperTradingAutomationSettings(account.user.id, parsed.data);
+      res
+        .status(existing.initialized ? 200 : 201)
+        .json(PutAccountPaperTradingAutomationResponse.parse(dashboard));
+    } catch (error) {
+      sendQuantOperationError(req, res, error, "自動模擬交易設定無法儲存。");
+    }
+  },
+);
+
+router.patch(
+  "/account/paper-trading/automation/status",
+  async (req: Request, res: Response<unknown, AccountLocals>): Promise<void> => {
+    const account = res.locals.account;
+    if (!account) {
+      res.status(401).json({ error: "請先登入。" });
+      return;
+    }
+    const parsed = PatchAccountPaperTradingAutomationStatusBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "自動模擬交易狀態格式錯誤。" });
+      return;
+    }
+    try {
+      const dashboard = await setPaperTradingAutomationEnabled(account.user.id, parsed.data.enabled);
+      res.json(PatchAccountPaperTradingAutomationStatusResponse.parse(dashboard));
+    } catch (error) {
+      sendQuantOperationError(req, res, error, "自動模擬交易狀態更新失敗。");
     }
   },
 );

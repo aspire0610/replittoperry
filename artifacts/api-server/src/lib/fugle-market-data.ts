@@ -140,6 +140,13 @@ export type FugleTaiexIntradayData = {
   bars: FugleTaiexIntradayCandle[];
 };
 
+export type FugleStockIntradayData = {
+  symbol: string;
+  exchange: "TWSE" | "TPEx";
+  date: string;
+  bars: FugleTaiexIntradayCandle[];
+};
+
 export type FugleStockDailyBar = {
   date: string;
   timestamp: number;
@@ -545,6 +552,79 @@ export async function fetchFugleTaiexIntradayCandles(): Promise<FugleTaiexIntrad
     throw new Error("Fugle 回傳無法辨識的加權指數分時資料");
   }
   return parseFugleTaiexIntradayCandles(payload);
+}
+
+async function fetchFugleStockIntradayCandlesUncached(symbol: string): Promise<FugleStockIntradayData> {
+  const apiKey = process.env.FUGLE_API_KEY?.trim();
+  if (!apiKey) throw new Error("尚未設定 Fugle 個股分時來源。");
+  const stockCode = symbol.trim().toUpperCase();
+  if (!/^[A-Z0-9]{4,6}$/.test(stockCode)) throw new Error("Fugle 個股分時代碼格式錯誤");
+  const url = new URL(`https://api.fugle.tw/marketdata/v1.0/stock/intraday/candles/${encodeURIComponent(stockCode)}`);
+  url.searchParams.set("timeframe", "1");
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: { Accept: "application/json", "X-API-KEY": apiKey },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    throw new Error("Fugle 個股分時暫時無法連線");
+  }
+  if (!response.ok) throw new Error(`Fugle 個股分時回應 HTTP ${response.status}`);
+  const payload = await response.json() as Record<string, unknown>;
+  const date = typeof payload.date === "string" ? payload.date : "";
+  if (
+    payload.symbol !== stockCode ||
+    (payload.exchange !== "TWSE" && payload.exchange !== "TPEx") ||
+    String(payload.timeframe) !== "1" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+    !Array.isArray(payload.data)
+  ) throw new Error("Fugle 個股分時代碼、交易所或週期不符");
+  const bars = payload.data.map((raw): FugleTaiexIntradayCandle => {
+    if (!raw || typeof raw !== "object") throw new Error("Fugle 個股分時包含無效 K 線");
+    const bar = raw as Record<string, unknown>;
+    const rawTime = typeof bar.date === "string" ? bar.date : "";
+    const time = dateFromFugleTimestamp(rawTime);
+    const open = finiteNumber(bar.open);
+    const high = finiteNumber(bar.high);
+    const low = finiteNumber(bar.low);
+    const close = finiteNumber(bar.close);
+    const volume = bar.volume === null ? null : finiteNumber(bar.volume);
+    const localClock = rawTime.slice(11, 16);
+    if (
+      !rawTime.startsWith(`${date}T`) || !time || time.getUTCSeconds() !== 0 ||
+      localClock < "09:00" || localClock > "13:30" ||
+      open === null || high === null || low === null || close === null ||
+      (volume === null && bar.volume !== null) || open <= 0 || high <= 0 || low <= 0 || close <= 0 || high < low ||
+      open < low - 0.01 || open > high + 0.01 || close < low - 0.01 ||
+      close > high + 0.01 || (volume !== null && volume < 0)
+    ) throw new Error("Fugle 個股分時包含不合理的時間或價格");
+    return { time, open, high, low, close, volume };
+  }).sort((a, b) => a.time.getTime() - b.time.getTime());
+  if (!bars.length || new Set(bars.map((bar) => bar.time.getTime())).size !== bars.length) {
+    throw new Error("Fugle 個股分時為空或時間重複");
+  }
+  return { symbol: stockCode, exchange: payload.exchange, date, bars };
+}
+
+const stockIntradayCache = new Map<string, { expiresAt: number; data: FugleStockIntradayData }>();
+const stockIntradayPending = new Map<string, Promise<FugleStockIntradayData>>();
+
+export async function fetchFugleStockIntradayCandles(symbol: string): Promise<FugleStockIntradayData> {
+  const key = symbol.trim().toUpperCase();
+  const cached = stockIntradayCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
+  const pending = stockIntradayPending.get(key);
+  if (pending) return pending;
+  const request = fetchFugleStockIntradayCandlesUncached(key);
+  stockIntradayPending.set(key, request);
+  try {
+    const data = await request;
+    stockIntradayCache.set(key, { expiresAt: Date.now() + 20_000, data });
+    return data;
+  } finally {
+    stockIntradayPending.delete(key);
+  }
 }
 
 export async function fetchFugleTaiexHistoricalIntradayCandles(

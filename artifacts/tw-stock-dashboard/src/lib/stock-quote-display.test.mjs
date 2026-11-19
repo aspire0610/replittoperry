@@ -17,10 +17,10 @@ function makeQuote(overrides = {}) {
   };
 }
 
-test("labels a verified trade from the screenshot window as delayed, not live", () => {
+test("keeps a verified trade fresh within the backend's three-minute AI window", () => {
   assert.deepEqual(
     getStockQuoteDisplayStatus(makeQuote(), true, NOW),
-    { available: true, isDelayedLastTrade: true },
+    { available: true, isDelayedLastTrade: false },
   );
 });
 
@@ -43,6 +43,17 @@ test("hides a verified trade once it is older than three minutes", () => {
       NOW,
     ),
     { available: false, isDelayedLastTrade: false },
+  );
+});
+
+test("keeps a verified trade fresh just before the three-minute limit", () => {
+  assert.deepEqual(
+    getStockQuoteDisplayStatus(
+      makeQuote({ asOf: new Date(NOW - 179_000).toISOString() }),
+      true,
+      NOW,
+    ),
+    { available: true, isDelayedLastTrade: false },
   );
 });
 

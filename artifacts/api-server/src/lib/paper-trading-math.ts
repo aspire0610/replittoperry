@@ -32,3 +32,48 @@ export function calculatePaperTradeCosts(
     transactionTax,
   };
 }
+
+export type RealizedPaperTradePnlInput = {
+  assetClass: "equity" | "futures";
+  shares: number;
+  entryPrice: number;
+  exitPrice: number;
+  direction?: "long" | "short";
+  contractMultiplier?: number;
+  isFundOrEtf: boolean;
+};
+
+export function calculateRealizedPaperTradePnl(
+  input: RealizedPaperTradePnlInput,
+): number {
+  if (input.assetClass === "futures") {
+    const direction = input.direction === "short" ? -1 : 1;
+    return roundMoney(
+      (input.exitPrice - input.entryPrice) *
+        input.shares *
+        (input.contractMultiplier ?? 0) *
+        direction,
+    );
+  }
+
+  const entryCosts = calculatePaperTradeCosts({
+    side: "buy",
+    shares: input.shares,
+    price: input.entryPrice,
+    isFundOrEtf: input.isFundOrEtf,
+  });
+  const exitCosts = calculatePaperTradeCosts({
+    side: "sell",
+    shares: input.shares,
+    price: input.exitPrice,
+    isFundOrEtf: input.isFundOrEtf,
+  });
+
+  return roundMoney(
+    exitCosts.grossAmount -
+      exitCosts.commission -
+      exitCosts.transactionTax -
+      entryCosts.grossAmount -
+      entryCosts.commission,
+  );
+}

@@ -27,8 +27,12 @@ import {
   GetMarketSummaryResponse,
   GetMarketAiDailySummaryResponse,
   GetFuturesAiDayStrategyResponse,
+  GetFuturesDayIntradayResponse,
   GetStockHistoryQueryParams,
   GetStockHistoryResponse,
+  GetStockAiMonitorResponse,
+  GetStockIntradayQueryParams,
+  GetStockIntradayResponse,
   GetStockResearchDataQueryParams,
   GetStockResearchDataResponse,
   RunStockAiHistoricalValidationBatchBody,
@@ -60,6 +64,7 @@ import {
 } from "../lib/stock-ai-assessment.js";
 import { askAssistantChat } from "../lib/assistant-chat.js";
 import { getFuturesAiDayStrategy } from "../lib/futures-ai-day-strategy.js";
+import { fetchFuturesDayIntraday } from "../lib/futures-day-intraday.js";
 import { getStockResearchData } from "../lib/stock-research-data.js";
 import { getMarketAiDailySummary } from "../lib/market-ai-daily-summary.js";
 import { getMarketChecklist } from "../lib/market-checklist.js";
@@ -78,6 +83,9 @@ import {
   buildStockScanTags,
   buildStockTradeScenarios,
 } from "../lib/stock-scorecard.js";
+
+import { getMarketMonitorData } from "../lib/market-monitor.js";
+import { fetchFugleStockIntradayCandles } from "../lib/fugle-market-data.js";
 
 const router: IRouter = Router();
 const assistantChatAuthMiddleware = clerkMiddleware();
@@ -249,6 +257,12 @@ router.get("/futures/ai-day-strategy", async (req, res): Promise<void> => {
   }
 });
 
+router.get("/futures/day-intraday", async (_req, res): Promise<void> => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  const intraday = await fetchFuturesDayIntraday();
+  res.json(GetFuturesDayIntradayResponse.parse(intraday));
+});
+
 router.get("/market/intraday", async (req, res): Promise<void> => {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
   try {
@@ -327,6 +341,56 @@ router.get("/stocks/history", async (req, res): Promise<void> => {
     res.json(GetStockHistoryResponse.parse({ ...history, quote }));
   } catch (error) {
     respondWithMarketError(req, res, error, "Unable to load stock history");
+  }
+});
+
+router.get("/stocks/ai-monitor", async (req, res): Promise<void> => {
+  res.setHeader("Cache-Control", "public, max-age=30, s-maxage=30, stale-while-revalidate=60");
+  try {
+    res.json(GetStockAiMonitorResponse.parse(await getMarketMonitorData()));
+  } catch (error) {
+    respondWithMarketError(req, res, error, "Unable to load categorized AI monitor data");
+  }
+});
+
+router.get("/stocks/intraday", async (req, res): Promise<void> => {
+  res.setHeader("Cache-Control", "no-store");
+  const parsed = GetStockIntradayQueryParams.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  try {
+    const data = await fetchFugleStockIntradayCandles(parsed.data.symbol);
+    const asOf = data.bars.at(-1)?.time;
+    if (!asOf) throw new Error("Fugle 個股分時沒有可顯示的 K 線");
+    const taipeiDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Taipei",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    const currentClock = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Taipei",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).format(new Date());
+    const currentMinute = Number(currentClock.slice(0, 2)) * 60 + Number(currentClock.slice(3, 5));
+    const sessionType = data.date === taipeiDate && currentMinute >= 540 && currentMinute <= 810 &&
+      Date.now() - asOf.getTime() <= 180_000 ? "live" : "historical";
+    res.json(GetStockIntradayResponse.parse({
+      symbol: data.symbol,
+      ticker: `${data.symbol}.${data.exchange === "TWSE" ? "TW" : "TWO"}`,
+      date: data.date,
+      timeframe: "1m",
+      sessionType,
+      source: "Fugle MarketData 個股一分鐘 K 線",
+      asOf: asOf.toISOString(),
+      bars: data.bars.map((bar) => ({ ...bar, time: bar.time.toISOString() })),
+    }));
+  } catch (error) {
+    respondWithMarketError(req, res, error, "Unable to load stock intraday candles");
   }
 });
 
