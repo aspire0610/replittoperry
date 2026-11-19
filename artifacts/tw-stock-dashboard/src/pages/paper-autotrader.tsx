@@ -447,7 +447,11 @@ function PaperAutotraderPage() {
                 )}
                 {dashboard.futuresPerformance.adjustmentMessage && (
                   <p className={`pa-adjustment-note is-${dashboard.futuresPerformance.adjustmentStatus}`} data-testid="text-futures-strategy-adjustment">
-                    <strong>{adjustmentStatusLabels[dashboard.futuresPerformance.adjustmentStatus]}</strong>
+                    <strong>{dashboard.futuresEntryMode === "aggressive"
+                      ? dashboard.futuresPerformance.adjustmentMessage.includes("已固定")
+                        ? "策略已固定"
+                        : "策略測試中"
+                      : adjustmentStatusLabels[dashboard.futuresPerformance.adjustmentStatus]}</strong>
                     {dashboard.futuresPerformance.adjustmentMessage}
                     {dashboard.futuresPerformance.adjustmentAt && <small> · {taipeiTime(dashboard.futuresPerformance.adjustmentAt)}</small>}
                   </p>
@@ -487,13 +491,19 @@ function PaperAutotraderPage() {
                   note={`勝 ${dashboard.futuresPerformance.wins} ／ 敗 ${dashboard.futuresPerformance.losses} ／ 平 ${dashboard.futuresPerformance.breakeven}`}
                 />
                 <Metric
-                  label="策略重評"
-                  value={dashboard.futuresForceEntryEnabled
-                    ? adjustmentStatusLabels[dashboard.futuresPerformance.adjustmentStatus]
-                    : "強制模式關閉"}
-                  note={dashboard.futuresForceEntryEnabled
-                    ? `連續停損 ${dashboard.futuresPerformance.consecutiveStopLosses} / 3`
-                    : "不自動觸發 AI 重評"}
+                  label={dashboard.futuresEntryMode === "aggressive" ? "策略試驗" : "策略重評"}
+                  value={dashboard.futuresEntryMode === "aggressive"
+                    ? dashboard.futuresPerformance.adjustmentMessage.includes("已固定")
+                      ? "達標固定"
+                      : "輪替測試"
+                    : dashboard.futuresForceEntryEnabled
+                      ? adjustmentStatusLabels[dashboard.futuresPerformance.adjustmentStatus]
+                      : "強制模式關閉"}
+                  note={dashboard.futuresEntryMode === "aggressive"
+                    ? "至少 20 筆且勝率達 75% 固定；連續停損 3 次切換"
+                    : dashboard.futuresForceEntryEnabled
+                      ? `連續停損 ${dashboard.futuresPerformance.consecutiveStopLosses} / 3`
+                      : "不自動觸發 AI 重評"}
                 />
               </div>
 
@@ -525,7 +535,7 @@ function PaperAutotraderPage() {
               ) : (
                 <EmptyBlock title="目前沒有判斷紀錄" detail="工作程序首次評估後，會在這裡顯示訊號、行情、風控結果及沒有進場的原因。" />
               )}
-              <p className="pa-monitor-footnote">勝率以有損益資料的已平倉期貨模擬交易計算；升級前最多回溯帳本保留的最近 100 筆事件。AI 重新評估不保證改善績效，單筆風險上限與每日停損不會因重評而放寬。</p>
+              <p className="pa-monitor-footnote">策略按序以紙上前向交易測試，不是同一市況下的同步比較，也不代表歷史回測或未來績效；固定門檻是至少 20 筆有輸贏的平倉且原始勝率達 75%，不保證獲利。單筆風險上限與每日停損不會因重評而放寬。</p>
             </section>
 
             <div className="pa-main-grid">
@@ -577,10 +587,10 @@ function PaperAutotraderPage() {
                           <option value="aggressive">積極模式 · 每小時目標 3 次</option>
                           <option value="convergent">收斂模式 · 只等明確訊號</option>
                         </select>
-                        <small>{futuresForceEntryEnabled
-                          ? "強制模式停利至少 20 點、不設上限；每小時 3 次仍是目標，不保證。單口風險超過額度、無有效方向或行情不新鮮時不進場。"
-                          : futuresEntryMode === "aggressive"
-                            ? "完整行情、期指與加權同向且風險門檻通過時，可不等突破回測；3 次是目標，無合格訊號不強迫進場。"
+                        <small>{futuresEntryMode === "aggressive"
+                          ? `AI 依序測試三種策略門檻${futuresForceEntryEnabled ? "；強制進場仍需明確多空、完整價位方案與至少 20 點停利" : "；日線可不完整"}。新鮮行情、方向依據、結構停損及帳戶風控不放寬；至少 20 筆有輸贏的紙上平倉且原始勝率達 75% 才固定，未達則同一策略連續停損 3 次後切換。`
+                          : futuresForceEntryEnabled
+                            ? "強制模式停利至少 20 點、不設上限；每小時 3 次仍是目標，不保證。單口風險超過額度、無有效方向或行情不新鮮時不進場。"
                             : "完整行情、期指與加權同向、風險門檻通過，且兩根完成的一分 K 突破回測確認後才進場。"}
                         </small>
                       </label>

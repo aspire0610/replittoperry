@@ -13,6 +13,7 @@ import {
   type PaperFuturesPerformanceState,
   type PaperFuturesStopLossOutcome,
   type PaperFuturesEntryMode,
+  type AggressiveFuturesStrategyId,
   type PaperTradingAutomation,
 } from "@workspace/db";
 import {
@@ -51,6 +52,12 @@ import {
   type PaperFuturesEntryDecision,
 } from "./paper-trading-automation-rules.js";
 import type { FuturesStrategyAdjustmentFeedback } from "./futures-ai-day-strategy.js";
+import {
+  adaptiveFuturesStrategyMessage,
+  emptyAdaptiveFuturesStrategyState,
+  recordAdaptiveFuturesStrategyOutcome,
+  resolveAggressiveFuturesStrategy,
+} from "./adaptive-futures-strategy.js";
 
 const MAX_EVENTS = 100;
 const SIGNAL_LIFETIME_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -70,7 +77,8 @@ const futuresStrategyKey = (
   entryMode: PaperFuturesEntryMode,
   forceEntry: boolean,
   sessionSymbol: "TXF1" | "TXF8",
-) => `${sessionSymbol}:${entryMode}:${forceEntry ? "forced" : "standard"}`;
+  adaptiveStrategyId?: AggressiveFuturesStrategyId,
+) => `${sessionSymbol}:${entryMode}:${forceEntry ? "forced" : "standard"}:${adaptiveStrategyId ?? "default"}`;
 const DISCLAIMER =
   "此帳本只做紙上模擬，不連接券商、不會送出真實委託；股票按現股成交，期貨以 TX 連續行情估算 TX／MTX／TMF 點值損益，每筆最多 5 口，不扣保證金、手續費或期交稅，也忽略排隊、滑價及市場衝擊。日盤與夜盤分別使用 TXF1、TXF8 專屬 AI 訊號及同時段資料；日盤 13:30、夜盤 04:45 後不再進場，各盤收盤前 5 分鐘若有新鮮行情就模擬平倉，若行情不足則保留持倉並持續監控。模擬結果不代表未來績效。";
 
@@ -89,6 +97,7 @@ const cachedAutomationFuturesStrategies = new Map<
 type FuturesStrategyForAccount = {
   strategy: FuturesAiDayStrategy | null;
   adjustedForStreakId: number | null;
+  adaptiveStrategyId?: AggressiveFuturesStrategyId;
 };
 
 export type PaperAutomationSettingsInput = {
@@ -139,6 +148,7 @@ function emptyFuturesPerformance(): PaperFuturesPerformanceState {
     adjustmentStatus: "idle",
     adjustmentAt: null,
     adjustmentMessage: "",
+    adaptiveStrategy: emptyAdaptiveFuturesStrategyState(),
   };
 }
 
@@ -156,6 +166,20 @@ function summarizeFuturesEvents(
     .sort((a, b) => Date.parse(a.asOf) - Date.parse(b.asOf));
 
   for (const event of exits) {
+    if (
+      event.adaptiveStrategyId &&
+      event.realizedPnl !== undefined &&
+      event.exitReason
+    ) {
+      performance.adaptiveStrategy = recordAdaptiveFuturesStrategyOutcome(
+        performance.adaptiveStrategy,
+        {
+          strategyId: event.adaptiveStrategyId,
+          realizedPnl: event.realizedPnl,
+          exitReason: event.exitReason,
+        },
+      );
+    }
     if (event.exitReason === "stop_loss") {
       if (performance.consecutiveStopLosses === 0) performance.stopLossStreakId += 1;
       performance.consecutiveStopLosses += 1;
@@ -278,6 +302,7 @@ function updateFuturesEvaluation(
 
 function futuresAdjustmentFeedback(
   performance: PaperFuturesPerformanceState,
+  includeStrategyTrials = false,
 ): FuturesStrategyAdjustmentFeedback | null {
   if (
     performance.consecutiveStopLosses < FUTURES_STOP_LOSS_REVIEW_THRESHOLD ||
@@ -287,17 +312,38 @@ function futuresAdjustmentFeedback(
     performance,
     FUTURES_STOP_LOSS_REVIEW_THRESHOLD,
   );
+  const withStrategyTrials = (
+    feedback: FuturesStrategyAdjustmentFeedback,
+  ): FuturesStrategyAdjustmentFeedback => includeStrategyTrials
+    ? {
+        ...feedback,
+        strategyTrials: Object.entries(performance.adaptiveStrategy?.strategies ?? {})
+          .map(([strategyId, stats]) => {
+            const decisiveTrades = stats.wins + stats.losses;
+            return {
+              strategyId: strategyId as AggressiveFuturesStrategyId,
+              closedTrades: stats.closedTrades,
+              wins: stats.wins,
+              losses: stats.losses,
+              rawWinRatePercent: decisiveTrades
+                ? Math.round(stats.wins / decisiveTrades * 1000) / 10
+                : null,
+              realizedPnl: stats.realizedPnl,
+            };
+          })
+      }
+    : feedback;
   const savedFeedback = performance.adjustmentFeedback;
   if (!reviewDue && savedFeedback?.streakId === performance.stopLossStreakId) {
-    return {
+    return withStrategyTrials({
       consecutiveStopLosses: savedFeedback.consecutiveStopLosses,
       recentStopLosses: savedFeedback.recentStopLosses,
-    };
+    });
   }
-  return {
+  return withStrategyTrials({
     consecutiveStopLosses: performance.consecutiveStopLosses,
     recentStopLosses: performance.recentStopLosses.slice(-FUTURES_STOP_LOSS_REVIEW_THRESHOLD),
-  };
+  });
 }
 
 function exchangeForTicker(ticker: string): "tse" | "otc" {
@@ -366,8 +412,13 @@ function toDashboard(row: PaperTradingAutomation | null) {
     };
   }
   const state = row.state ?? emptyState();
-  const futuresPerformance = state.futuresPerformance ??
-    summarizeFuturesEvents(state.events ?? [], row.futuresForceEntryEnabled);
+  const futuresPerformance = {
+    ...(state.futuresPerformance ??
+      summarizeFuturesEvents(state.events ?? [], row.futuresForceEntryEnabled)),
+    adaptiveStrategy:
+      state.futuresPerformance?.adaptiveStrategy ??
+      emptyAdaptiveFuturesStrategyState(),
+  };
   const cash = numberValue(row.cash);
   const currentDay = state.dailyDate === toTaipeiDate();
   return {
@@ -402,9 +453,15 @@ function toDashboard(row: PaperTradingAutomation | null) {
         ? Math.round(futuresPerformance.wins / (futuresPerformance.wins + futuresPerformance.losses) * 1000) / 10
         : null,
       consecutiveStopLosses: futuresPerformance.consecutiveStopLosses,
-      adjustmentStatus: futuresPerformance.adjustmentStatus,
+      adjustmentStatus: row.futuresEntryMode === "aggressive"
+        ? futuresPerformance.adaptiveStrategy.status === "locked"
+          ? "applied"
+          : "pending"
+        : futuresPerformance.adjustmentStatus,
       adjustmentAt: futuresPerformance.adjustmentAt,
-      adjustmentMessage: futuresPerformance.adjustmentMessage,
+      adjustmentMessage: row.futuresEntryMode === "aggressive"
+        ? adaptiveFuturesStrategyMessage(futuresPerformance.adaptiveStrategy)
+        : futuresPerformance.adjustmentMessage,
     },
     lastProcessedAt: state.lastProcessedAt,
     disclaimer: DISCLAIMER,
@@ -749,6 +806,7 @@ async function getAutomationFuturesStrategy(
   forceEntry: boolean,
   sessionSymbol: "TXF1" | "TXF8",
   adjustmentFeedback?: FuturesStrategyAdjustmentFeedback,
+  adaptiveStrategyId?: AggressiveFuturesStrategyId,
 ): Promise<FuturesAiDayStrategy | null> {
   for (const [key, cached] of cachedAutomationFuturesStrategies) {
     if (now.getTime() - cached.lastAttemptAt > 30 * 60_000) {
@@ -758,7 +816,7 @@ async function getAutomationFuturesStrategy(
   const feedbackHash = adjustmentFeedback
     ? JSON.stringify(adjustmentFeedback)
     : "base";
-  const cacheKey = `${futuresStrategyKey(entryMode, forceEntry, sessionSymbol)}:${feedbackHash}`;
+  const cacheKey = `${futuresStrategyKey(entryMode, forceEntry, sessionSymbol)}:${adaptiveStrategyId ?? "default"}:${feedbackHash}`;
   const cached = cachedAutomationFuturesStrategies.get(cacheKey);
   if (
     cached &&
@@ -771,7 +829,12 @@ async function getAutomationFuturesStrategy(
     strategy: null,
   });
   try {
-    const strategy = await getFuturesAiDayStrategy(entryMode, forceEntry, adjustmentFeedback);
+    const strategy = await getFuturesAiDayStrategy(
+      entryMode,
+      forceEntry,
+      adjustmentFeedback,
+      adaptiveStrategyId,
+    );
     cachedAutomationFuturesStrategies.set(cacheKey, {
       lastAttemptAt: now.getTime(),
       strategy,
@@ -919,8 +982,10 @@ async function processAutomationAccount(
     state.futuresDecisionLogs ??= [];
     state.futuresPerformance ??= summarizeFuturesEvents(
       state.events ?? [],
-      current.futuresForceEntryEnabled,
+      current.futuresForceEntryEnabled || current.futuresEntryMode === "aggressive",
     );
+    state.futuresPerformance.adaptiveStrategy ??=
+      emptyAdaptiveFuturesStrategyState();
     let cash = numberValue(current.cash);
     const today = toTaipeiDate(now);
     const futuresSession = resolveFuturesSession(now.getTime());
@@ -1000,7 +1065,11 @@ async function processAutomationAccount(
           stopLossPrice: position.stopLossPrice,
           realizedPnl,
           asOf: quote.asOf.toISOString(),
-        }, FUTURES_STOP_LOSS_REVIEW_THRESHOLD, current.futuresForceEntryEnabled);
+          adaptiveStrategyId: position.adaptiveStrategyId,
+        },
+        FUTURES_STOP_LOSS_REVIEW_THRESHOLD,
+        current.futuresForceEntryEnabled || current.futuresEntryMode === "aggressive",
+      );
       } else {
         const costs = calculatePaperTradeCosts({
           side: "sell",
@@ -1026,6 +1095,9 @@ async function processAutomationAccount(
         ...(position.assetClass ? { assetClass: position.assetClass } : {}),
         ...(position.contractType ? { contractType: position.contractType } : {}),
         ...(position.direction ? { direction: position.direction } : {}),
+        ...(position.adaptiveStrategyId
+          ? { adaptiveStrategyId: position.adaptiveStrategyId }
+          : {}),
         ...(position.assetClass === "futures" ? { contracts: position.shares } : {}),
         exitReason,
         entryPrice: position.entryPrice,
@@ -1069,7 +1141,10 @@ async function processAutomationAccount(
     }
 
     const performance = state.futuresPerformance;
-    const feedback = futuresAdjustmentFeedback(performance);
+    const feedback = futuresAdjustmentFeedback(
+      performance,
+      current.futuresEntryMode === "aggressive",
+    );
     if (
       current.futuresForceEntryEnabled &&
       feedback &&
@@ -1089,23 +1164,30 @@ async function processAutomationAccount(
       performance.adjustmentMessage = "強制進場模式已關閉，暫停 AI 策略重新評估。";
     }
     const accountStrategyResult = futuresStrategies.get(`account:${row.userId}`);
+    const expectedAdaptiveStrategyId =
+      current.futuresEntryMode === "aggressive"
+        ? resolveAggressiveFuturesStrategy(performance.adaptiveStrategy).id
+        : undefined;
     const baseStrategyResult = futuresStrategies.get(futuresStrategyKey(
       current.futuresEntryMode as PaperFuturesEntryMode,
       current.futuresForceEntryEnabled,
       futuresSession.symbol,
+      expectedAdaptiveStrategyId,
     ));
-    const strategyResult = current.futuresForceEntryEnabled && feedback
-      ? accountStrategyResult
-      : accountStrategyResult ?? baseStrategyResult;
+    const strategyResult = accountStrategyResult ?? baseStrategyResult;
     const futuresStrategy = strategyResult?.strategy ?? null;
     const hasFreshAdjustment =
       Boolean(feedback) &&
       strategyResult?.adjustedForStreakId === performance.stopLossStreakId &&
       Boolean(futuresStrategy?.aiProvider);
+    const strategyDoesNotMatchActiveVariant =
+      Boolean(expectedAdaptiveStrategyId) &&
+      strategyResult?.adaptiveStrategyId !== expectedAdaptiveStrategyId;
     const strategyReviewPending =
-      current.futuresForceEntryEnabled &&
-      Boolean(feedback) &&
-      !hasFreshAdjustment;
+      (Boolean(feedback) &&
+        (current.futuresForceEntryEnabled || current.futuresEntryMode === "aggressive") &&
+        !hasFreshAdjustment) ||
+      strategyDoesNotMatchActiveVariant;
     if (
       hasFreshAdjustment &&
       performance.lastAdjustedStreakId !== performance.stopLossStreakId
@@ -1174,6 +1256,9 @@ async function processAutomationAccount(
           direction,
           contractMultiplier: contract.multiplier,
           ...(futuresEntry.forced ? { forcedEntry: true } : {}),
+          ...(strategyResult?.adaptiveStrategyId
+            ? { adaptiveStrategyId: strategyResult.adaptiveStrategyId }
+            : {}),
           entryPrice: futuresEntry.entryPrice,
           stopLossPrice: futuresEntry.stopLossPrice,
           takeProfitPrice: futuresEntry.targetPrice,
@@ -1188,6 +1273,9 @@ async function processAutomationAccount(
           assetClass: "futures",
           contractType,
           direction: pending.direction,
+          ...(pending.adaptiveStrategyId
+            ? { adaptiveStrategyId: pending.adaptiveStrategyId }
+            : {}),
           kind: "signal_queued",
           side: direction === "long" ? "buy" : "sell",
           shares: null,
@@ -1221,6 +1309,9 @@ async function processAutomationAccount(
         ...(pending.assetClass ? { assetClass: pending.assetClass } : {}),
         ...(pending.contractType ? { contractType: pending.contractType } : {}),
         ...(pending.direction ? { direction: pending.direction } : {}),
+        ...(pending.adaptiveStrategyId
+          ? { adaptiveStrategyId: pending.adaptiveStrategyId }
+          : {}),
       };
       const eventSide = direction === "short" ? "sell" : "buy";
       if (isFutures && !current.futuresEnabled) {
@@ -1405,6 +1496,9 @@ async function processAutomationAccount(
         ...(pending.contractType ? { contractType: pending.contractType } : {}),
         ...(pending.direction ? { direction: pending.direction } : {}),
         ...(pending.contractMultiplier ? { contractMultiplier: pending.contractMultiplier } : {}),
+        ...(pending.adaptiveStrategyId
+          ? { adaptiveStrategyId: pending.adaptiveStrategyId }
+          : {}),
         entryPrice: costs?.price ?? price,
         stopLossPrice: pending.stopLossPrice,
         takeProfitPrice: pending.takeProfitPrice,
@@ -1469,24 +1563,49 @@ export async function runPaperTradingAutomationCycle(now = new Date()): Promise<
     const activeConfigs = new Map<string, {
       entryMode: PaperFuturesEntryMode;
       forceEntry: boolean;
+      adaptiveStrategyId?: AggressiveFuturesStrategyId;
     }>();
     for (const row of eligibleRows.filter((candidate) => candidate.enabled && candidate.futuresEnabled)) {
       const entryMode = row.futuresEntryMode as PaperFuturesEntryMode;
       const forceEntry = row.futuresForceEntryEnabled;
       const performance = row.state.futuresPerformance ??
-        summarizeFuturesEvents(row.state.events ?? [], row.futuresForceEntryEnabled);
-      const feedback = forceEntry ? futuresAdjustmentFeedback(performance) : null;
-      if (feedback) {
-        futuresStrategies.set(`account:${row.userId}`, {
-          strategy: await getAutomationFuturesStrategy(
-            now,
-            entryMode,
-            forceEntry,
-            futuresSession.symbol,
-            feedback,
-          ),
-          adjustedForStreakId: performance.stopLossStreakId,
-        });
+        summarizeFuturesEvents(
+          row.state.events ?? [],
+          row.futuresForceEntryEnabled || row.futuresEntryMode === "aggressive",
+        );
+      const adaptiveEnabled = entryMode === "aggressive";
+      const adaptiveState = performance.adaptiveStrategy ??
+        emptyAdaptiveFuturesStrategyState();
+      const adaptiveStrategyId = adaptiveEnabled
+        ? resolveAggressiveFuturesStrategy(adaptiveState).id
+        : undefined;
+      const feedback = adaptiveEnabled
+        ? adaptiveState.status !== "locked"
+          ? futuresAdjustmentFeedback(performance, true)
+          : null
+        : forceEntry
+          ? futuresAdjustmentFeedback(performance)
+          : null;
+      if (adaptiveEnabled || feedback) {
+        if (feedback) {
+          futuresStrategies.set(`account:${row.userId}`, {
+            strategy: await getAutomationFuturesStrategy(
+              now,
+              entryMode,
+              forceEntry,
+              futuresSession.symbol,
+              feedback,
+              adaptiveStrategyId,
+            ),
+            adjustedForStreakId: performance.stopLossStreakId,
+            ...(adaptiveStrategyId ? { adaptiveStrategyId } : {}),
+          });
+        } else {
+          activeConfigs.set(
+            futuresStrategyKey(entryMode, forceEntry, futuresSession.symbol, adaptiveStrategyId),
+            { entryMode, forceEntry, adaptiveStrategyId },
+          );
+        }
       } else {
         activeConfigs.set(futuresStrategyKey(entryMode, forceEntry, futuresSession.symbol), {
           entryMode,
@@ -1503,8 +1622,13 @@ export async function runPaperTradingAutomationCycle(now = new Date()): Promise<
             config.entryMode,
             config.forceEntry,
             futuresSession.symbol,
+            undefined,
+            config.adaptiveStrategyId,
           ),
           adjustedForStreakId: null,
+          ...(config.adaptiveStrategyId
+            ? { adaptiveStrategyId: config.adaptiveStrategyId }
+            : {}),
         },
       );
     }
