@@ -7,6 +7,7 @@ import {
 } from "./market-data.js";
 import type { FuturesAiDayStrategy } from "@workspace/api-zod";
 import type {
+  AggressiveFuturesStrategyId,
   PaperFuturesEntryMode,
   PaperFuturesStopLossOutcome,
 } from "@workspace/db";
@@ -34,6 +35,11 @@ import {
 import { fetchFuturesDayIntraday } from "./futures-day-intraday.js";
 import { analyzeFuturesNightEvidence } from "./futures-night-strategy-evidence.js";
 import { resolveFuturesSession } from "./futures-session.js";
+import {
+  AGGRESSIVE_FUTURES_STRATEGIES,
+  qualifiesAggressiveFuturesStrategy,
+  type AggressiveFuturesStrategy,
+} from "./adaptive-futures-strategy.js";
 
 const TAIPEI_OFFSET_MS = 8 * 60 * 60 * 1000;
 const STRATEGY_CACHE_MS = 5 * 60_000;
@@ -52,7 +58,7 @@ const STRATEGY_INSTRUCTIONS = [
   "只能使用輸入的 TAIFEX 或 Yuanta SPARK 期貨報價、具來源標示的日盤一分 OHLC、TAIFEX 官方 TX 日盤日線及其日 ATR14/4、由一分 OHLC 計算的 KD、加權指數報價及加權指數官方日線；不可補造新聞、價格、成交量、波動或不存在的價格結構。",
   "日盤一分 OHLC 若來自 SPARK，使用提供的一分 K 線；若來自 TAIFEX，僅涵蓋伺服器連線後實際觀測到的成交。若 K、D 或交叉訊號不足，不能推測 KD 訊號。若有黃金／死亡交叉，只能視為短線觀察訊號，仍需和日盤期指漲跌方向、加權指數方向及近期日線一起判斷；沒有交叉不可宣稱出現交叉。期指漲跌點數與百分比依報價來源提供的參考價計算，不等於短線趨勢，不可單獨決定方向。沒有期貨成交量或買賣盤。",
   "只提供一組主方案，不得同時列做多與做空兩套。只要有新鮮日盤期指即時價，無論 action 為何都必須提供 planDirection、單一 entryPrice、stopLossPrice、targetPrice 及各自理由；不可因低風險門檻未達或訊號未確認而把方案欄位設為 null。若證據不足，選目前較有依據的一側作條件式參考方案，明確說明不代表可立即進場。",
-  "避免急漲急跌與盤整洗價：不要追逐單根長紅／長黑或突然放大的波動；條件式進場需要兩根連續完成的一分 K 確認方向、再回測進場位，且加權指數與期指同向；條件成立前 action 選 wait。",
+  "避免追逐單根長紅／長黑或突然放大的波動；進場方向仍須有可核對的即時期貨與加權指數依據，不得猜方向。",
   "若應等待確認，action 選 wait，planDirection 只選目前證據較支持的一個方向，entryPrice 是單一條件觸發價，不可把條件價冒稱現價。任何條件式方案都要具體給進場、停損、停利價；用數據不足作理由時，仍須把方案標示為主觀參考而不是合格低風險方案。",
   "價位理由只能說明輸入中可核對的依據，不得宣稱成交量或買賣盤訊號。此判讀只供日盤短線參考，不代表實際下單、成交或保證結果。",
   "夜盤報價只作背景，不得當成目前日盤成交。若日盤行情不明確、個股以外的市場資料互相矛盾或資料不足，action 選 wait 或 insufficient。",
@@ -66,7 +72,7 @@ const FORCED_PAPER_PLAN_INSTRUCTIONS =
   `強制進場紙上模擬的停利目標至少 ${PAPER_FORCE_ENTRY_MIN_TARGET_POINTS} 點，可高於此距離且不設上限；不必為符合一般模式的 ${FUTURES_MIN_TARGET_POINTS} 點或 ${FUTURES_MIN_REWARD_RISK}:1 而拉遠目標。停損仍依可見價格結構設定，不得為了增加成交而刻意縮窄；單口風險超過帳戶單筆風險額度時仍不進場。`;
 const ENTRY_MODE_INSTRUCTIONS: Record<PaperFuturesEntryMode, string> = {
   aggressive:
-    "目前是積極模式。完整日盤資料齊全、期指與加權指數同向、停利至少 150 點且風險報酬達 2:1 時，可不等待突破回測而提供立即進場方向；仍須遵守新鮮報價、方向一致、有效停損停利及風控要求。每小時 3 次是目標，不得為湊次數強迫進場；條件不合格就 wait 或 insufficient。",
+    "目前是積極模式，使用指定候選策略進行紙上前向測試；可不等待突破回測，但不得猜測方向。保留新鮮行情、有效結構停損、方向確認及帳戶風控；每小時 3 次只是目標，不得為湊次數強迫進場。",
   convergent:
     "目前是收斂模式。只有完整日盤資料齊全、期指與加權指數同向、停利至少 150 點、風險報酬達 2:1，且有兩根完成的一分 K 突破回測確認時，才可提供立即進場方向；任何條件不足都選 wait 或 insufficient。",
 };
@@ -76,20 +82,36 @@ const FORCED_PAPER_ENTRY_INSTRUCTIONS =
 export type FuturesStrategyAdjustmentFeedback = {
   consecutiveStopLosses: number;
   recentStopLosses: PaperFuturesStopLossOutcome[];
+  strategyTrials?: Array<{
+    strategyId: AggressiveFuturesStrategyId;
+    closedTrades: number;
+    wins: number;
+    losses: number;
+    rawWinRatePercent: number | null;
+    realizedPnl: number;
+  }>;
 };
 
 function strategyInstructions(
   entryMode: PaperFuturesEntryMode,
   forceEntryMode: boolean,
   adjustmentFeedback?: FuturesStrategyAdjustmentFeedback,
+  aggressiveStrategy?: AggressiveFuturesStrategy,
 ): string {
   const adjustmentInstructions = adjustmentFeedback
-    ? "這是帳戶連續停損後的紙上策略重新評估。檢視提供的近期停損方向、進出價格與損益，並結合當前市場證據重新判斷；不可照抄舊方向或舊價位，不可為避免停損而任意放寬停損，也不可降低風險控管。若證據不支持多空方向，action 必須為 wait 或 insufficient。這是重新分析，不保證之後獲利。"
+    ? "這是帳戶連續停損後的紙上策略重新評估。檢視近期停損與各候選策略已記錄的紙上結果，再結合當前市場證據判斷；樣本不足時不可宣稱哪一套更好。不可照抄舊方向或舊價位，不可為避免停損而任意放寬停損，也不可降低風險控管。若證據不支持多空方向，action 必須為 wait 或 insufficient。這是重新分析，不保證之後獲利。"
     : "";
   return [
     STRATEGY_INSTRUCTIONS,
-    forceEntryMode ? FORCED_PAPER_PLAN_INSTRUCTIONS : STANDARD_PLAN_INSTRUCTIONS,
+    forceEntryMode
+      ? FORCED_PAPER_PLAN_INSTRUCTIONS
+      : aggressiveStrategy
+        ? `積極測試候選「${aggressiveStrategy.label}」：停利至少 ${aggressiveStrategy.minimumTargetPoints} 點，風險報酬至少 ${aggressiveStrategy.minimumRewardRisk}:1；日線歷史可缺，但必須有新鮮同步的期貨與加權指數報價，以及有效的同時段盤中證據。停損依可見價格結構設定，不得縮窄停損迎合進場。`
+        : STANDARD_PLAN_INSTRUCTIONS,
     forceEntryMode ? FORCED_PAPER_ENTRY_INSTRUCTIONS : ENTRY_MODE_INSTRUCTIONS[entryMode],
+    entryMode === "convergent"
+      ? "立即進場還須兩根連續完成的一分 K 突破回測確認；未成立就 wait。"
+      : "",
     adjustmentInstructions,
   ].join(" ");
 }
@@ -468,6 +490,7 @@ async function getFuturesAiNightStrategy(input: {
   entryMode: PaperFuturesEntryMode;
   forceEntryMode: boolean;
   adjustmentFeedback?: FuturesStrategyAdjustmentFeedback;
+  aggressiveStrategy?: AggressiveFuturesStrategy;
   session: ReturnType<typeof resolveFuturesSession>;
 }): Promise<FuturesAiDayStrategy> {
   const {
@@ -477,6 +500,7 @@ async function getFuturesAiNightStrategy(input: {
     entryMode,
     forceEntryMode,
     adjustmentFeedback,
+    aggressiveStrategy,
     session,
   } = input;
   let intraday: Awaited<ReturnType<typeof fetchFuturesDayIntraday>> | null = null;
@@ -541,7 +565,7 @@ async function getFuturesAiNightStrategy(input: {
   const feedbackKey = adjustmentFeedback
     ? createHash("sha256").update(JSON.stringify(adjustmentFeedback)).digest("hex").slice(0, 20)
     : "base";
-  const strategyCacheKey = `TXF8:${entryMode}:${forceEntryMode ? "forced" : "standard"}:${feedbackKey}`;
+  const strategyCacheKey = `TXF8:${entryMode}:${forceEntryMode ? "forced" : "standard"}:${aggressiveStrategy?.id ?? "default"}:${feedbackKey}`;
   const intradayFingerprint = [
     session.date,
     evidence.minuteBars.at(-1)?.time ?? "",
@@ -613,10 +637,18 @@ async function getFuturesAiNightStrategy(input: {
           recentPaperTradeOutcomes: {
             consecutiveStopLosses: adjustmentFeedback.consecutiveStopLosses,
             stopLosses: adjustmentFeedback.recentStopLosses.slice(-3),
+            strategyTrials: adjustmentFeedback.strategyTrials ?? [],
           },
         }
       : {}),
     mode: entryMode,
+    aggressiveStrategy: aggressiveStrategy
+      ? {
+          id: aggressiveStrategy.id,
+          minimumTargetPoints: aggressiveStrategy.minimumTargetPoints,
+          minimumRewardRisk: aggressiveStrategy.minimumRewardRisk,
+        }
+      : null,
     forcedPaperEntry: forceEntryMode,
     limits: {
       minimumTargetPoints: forceEntryMode
@@ -634,7 +666,7 @@ async function getFuturesAiNightStrategy(input: {
         NIGHT_STRATEGY_INSTRUCTIONS,
         forceEntryMode
           ? `夜盤強制紙上進場的停利目標至少 ${PAPER_FORCE_ENTRY_MIN_TARGET_POINTS} 點；仍須以夜盤 K 線設停損並符合帳戶單筆風險上限。`
-          : `夜盤一般方案停利目標至少 ${FUTURES_MIN_TARGET_POINTS} 點、風險報酬至少 ${FUTURES_MIN_REWARD_RISK}:1；未達任一門檻時只能等待，不可放寬帳戶風控。停損與停利只依夜盤完整 OHLC 結構，不使用官方日線 ATR。`,
+          : `夜盤方案停利目標至少 ${aggressiveStrategy?.minimumTargetPoints ?? FUTURES_MIN_TARGET_POINTS} 點、風險報酬至少 ${aggressiveStrategy?.minimumRewardRisk ?? FUTURES_MIN_REWARD_RISK}:1；未達任一門檻時只能等待，不可放寬帳戶風控。停損與停利只依夜盤完整 OHLC 結構，不使用官方日線 ATR。`,
         entryMode === "aggressive"
           ? "積極模式仍須夜盤方向與進場確認成立。"
           : "收斂模式除夜盤方向與進場確認外，還須通過兩根連續完成夜盤一分 K 的回測確認。",
@@ -692,10 +724,11 @@ async function getFuturesAiNightStrategy(input: {
   const rewardRisk = rewardPoints / riskPoints;
   const targetFloor = forceEntryMode
     ? PAPER_FORCE_ENTRY_MIN_TARGET_POINTS
-    : FUTURES_MIN_TARGET_POINTS;
+    : aggressiveStrategy?.minimumTargetPoints ?? FUTURES_MIN_TARGET_POINTS;
   const meetsRiskThresholds =
     rewardPoints >= targetFloor &&
-    (forceEntryMode || rewardRisk >= FUTURES_MIN_REWARD_RISK);
+    (forceEntryMode ||
+      rewardRisk >= (aggressiveStrategy?.minimumRewardRisk ?? FUTURES_MIN_REWARD_RISK));
   const qualified = modeConfirmation && meetsRiskThresholds;
   const action =
     qualified && strategy.action === evidence.direction
@@ -763,7 +796,12 @@ export async function getFuturesAiDayStrategy(
   entryMode: PaperFuturesEntryMode = "convergent",
   forceEntryMode = false,
   adjustmentFeedback?: FuturesStrategyAdjustmentFeedback,
+  adaptiveStrategyId?: AggressiveFuturesStrategyId,
 ): Promise<FuturesAiDayStrategy> {
+  const aggressiveStrategy = entryMode === "aggressive"
+    ? AGGRESSIVE_FUTURES_STRATEGIES.find((item) => item.id === adaptiveStrategyId) ??
+      AGGRESSIVE_FUTURES_STRATEGIES[0]
+    : undefined;
   let quotes: MarketQuoteData[];
   try {
     quotes = await getMarketQuotes();
@@ -795,6 +833,7 @@ export async function getFuturesAiDayStrategy(
       entryMode,
       forceEntryMode,
       adjustmentFeedback,
+      aggressiveStrategy,
       session,
     });
   }
@@ -838,7 +877,7 @@ export async function getFuturesAiDayStrategy(
   const feedbackKey = adjustmentFeedback
     ? createHash("sha256").update(JSON.stringify(adjustmentFeedback)).digest("hex").slice(0, 20)
     : "base";
-  const strategyCacheKey = `TXF1:${entryMode}:${forceEntryMode ? "forced" : "standard"}:${feedbackKey}`;
+  const strategyCacheKey = `TXF1:${entryMode}:${forceEntryMode ? "forced" : "standard"}:${aggressiveStrategy?.id ?? "default"}:${feedbackKey}`;
   const cachedStrategy = cachedStrategies.get(strategyCacheKey);
   if (
     cachedStrategy &&
@@ -891,9 +930,18 @@ export async function getFuturesAiDayStrategy(
               realizedPnl: trade.realizedPnl,
               asOf: trade.asOf,
             })),
+            strategyTrials: adjustmentFeedback.strategyTrials ?? [],
           },
         }
       : {}),
+    aggressiveStrategy: aggressiveStrategy
+      ? {
+          id: aggressiveStrategy.id,
+          minimumTargetPoints: aggressiveStrategy.minimumTargetPoints,
+          minimumRewardRisk: aggressiveStrategy.minimumRewardRisk,
+          requireCompleteContext: aggressiveStrategy.requireCompleteContext,
+        }
+      : null,
     dayFuturesQuote: {
       ticker: dayQuote.ticker,
       price: dayQuote.price,
@@ -967,7 +1015,12 @@ export async function getFuturesAiDayStrategy(
     aiResponse = await withAiProviderFallback({
       operation: "futures_day_strategy",
       allowedProviders: ["groq", "gemini", "openrouter", "replit"],
-      instructions: strategyInstructions(entryMode, forceEntryMode, adjustmentFeedback),
+      instructions: strategyInstructions(
+        entryMode,
+        forceEntryMode,
+        adjustmentFeedback,
+        aggressiveStrategy,
+      ),
       input: JSON.stringify(marketContext),
       schema: outputSchema,
       // Retry providers for malformed or wrongly ordered prices, but keep the
@@ -1010,10 +1063,11 @@ export async function getFuturesAiDayStrategy(
   const rewardRisk = rewardPoints / riskPoints;
   const targetFloor = forceEntryMode
     ? PAPER_FORCE_ENTRY_MIN_TARGET_POINTS
-    : FUTURES_MIN_TARGET_POINTS;
+    : aggressiveStrategy?.minimumTargetPoints ?? FUTURES_MIN_TARGET_POINTS;
   const meetsRiskThresholds =
     rewardPoints >= targetFloor &&
-    (forceEntryMode || rewardRisk >= FUTURES_MIN_REWARD_RISK);
+    (forceEntryMode ||
+      rewardRisk >= (aggressiveStrategy?.minimumRewardRisk ?? FUTURES_MIN_REWARD_RISK));
   const hasDirectionalAgreement = hasDirectionalQuoteAgreement({
       direction: strategy.planDirection,
       futuresChange: dayQuote.change,
@@ -1024,13 +1078,20 @@ export async function getFuturesAiDayStrategy(
       entryPrice: strategy.entryPrice,
       bars: futuresIntraday?.bars ?? [],
     });
-  const hasQualifiedImmediateSetup = qualifiesFuturesEntryMode({
-    mode: entryMode,
-    hasCompleteContext,
-    meetsRiskThresholds,
-    hasDirectionalAgreement,
-    hasBreakoutRetestConfirmation: hasBreakoutRetest,
-  });
+  const hasQualifiedImmediateSetup = aggressiveStrategy
+    ? qualifiesAggressiveFuturesStrategy(aggressiveStrategy, {
+        hasCompleteContext,
+        hasLiveDirectionalContext: hasIntradayEvidence && hasSynchronizedTaiexQuote,
+        meetsRiskThresholds,
+        hasDirectionalAgreement,
+      })
+    : qualifiesFuturesEntryMode({
+        mode: entryMode,
+        hasCompleteContext,
+        meetsRiskThresholds,
+        hasDirectionalAgreement,
+        hasBreakoutRetestConfirmation: hasBreakoutRetest,
+      });
   const planResolution = resolveFuturesEntryPlan({
     action: hasQualifiedImmediateSetup
       ? strategy.action

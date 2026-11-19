@@ -3,6 +3,25 @@ import { boolean, integer, jsonb, numeric, pgTable, text, timestamp } from "driz
 import { z } from "zod/v4";
 
 export type PaperFuturesEntryMode = "aggressive" | "convergent";
+export type AggressiveFuturesStrategyId =
+  | "aggressive_balanced"
+  | "aggressive_relaxed"
+  | "aggressive_flexible";
+
+export type AdaptiveFuturesStrategyStats = {
+  closedTrades: number;
+  wins: number;
+  losses: number;
+  realizedPnl: number;
+};
+
+export type AdaptiveFuturesStrategyState = {
+  status: "exploring" | "locked";
+  activeStrategyId: AggressiveFuturesStrategyId;
+  strategyConsecutiveStopLosses: number;
+  switchCount: number;
+  strategies: Record<AggressiveFuturesStrategyId, AdaptiveFuturesStrategyStats>;
+};
 
 export type PaperAutomationPosition = {
   id: string;
@@ -14,6 +33,7 @@ export type PaperAutomationPosition = {
   contractType?: "TX" | "MTX" | "TMF";
   direction?: "long" | "short";
   contractMultiplier?: number;
+  adaptiveStrategyId?: AggressiveFuturesStrategyId;
   entryPrice: number;
   stopLossPrice: number;
   takeProfitPrice: number;
@@ -34,6 +54,7 @@ export type PaperAutomationPendingEntry = {
   direction?: "long" | "short";
   contractMultiplier?: number;
   forcedEntry?: boolean;
+  adaptiveStrategyId?: AggressiveFuturesStrategyId;
   entryPrice: number;
   stopLossPrice: number;
   takeProfitPrice: number;
@@ -49,6 +70,7 @@ export type PaperAutomationEvent = {
   assetClass?: "equity" | "futures";
   contractType?: "TX" | "MTX" | "TMF";
   direction?: "long" | "short";
+  adaptiveStrategyId?: AggressiveFuturesStrategyId;
   contracts?: number | null;
   exitReason?: "take_profit" | "stop_loss" | "session_end";
   entryPrice?: number;
@@ -105,6 +127,7 @@ export type PaperFuturesPerformanceState = {
   adjustmentStatus: "idle" | "pending" | "applied";
   adjustmentAt: string | null;
   adjustmentMessage: string;
+  adaptiveStrategy: AdaptiveFuturesStrategyState;
 };
 
 export type PaperAutomationState = {
@@ -153,6 +176,17 @@ export const paperTradingAutomationTable = pgTable("paper_trading_automation", {
       adjustmentStatus: "idle",
       adjustmentAt: null,
       adjustmentMessage: "",
+      adaptiveStrategy: {
+        status: "exploring",
+        activeStrategyId: "aggressive_balanced",
+        strategyConsecutiveStopLosses: 0,
+        switchCount: 0,
+        strategies: {
+          aggressive_balanced: { closedTrades: 0, wins: 0, losses: 0, realizedPnl: 0 },
+          aggressive_relaxed: { closedTrades: 0, wins: 0, losses: 0, realizedPnl: 0 },
+          aggressive_flexible: { closedTrades: 0, wins: 0, losses: 0, realizedPnl: 0 },
+        },
+      },
     },
     dailyDate: null,
     dailyStartEquity: null,

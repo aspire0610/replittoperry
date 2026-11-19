@@ -1,3 +1,12 @@
+import type {
+  AdaptiveFuturesStrategyState,
+  AggressiveFuturesStrategyId,
+} from "@workspace/db";
+import {
+  emptyAdaptiveFuturesStrategyState,
+  recordAdaptiveFuturesStrategyOutcome,
+} from "./adaptive-futures-strategy.js";
+
 export type PaperAutomationSignal = {
   action?: unknown;
   direction?: unknown;
@@ -48,6 +57,7 @@ export type FuturesPaperPerformance = {
   adjustmentStatus: "idle" | "pending" | "applied";
   adjustmentAt: string | null;
   adjustmentMessage: string;
+  adaptiveStrategy: AdaptiveFuturesStrategyState;
 };
 
 const MINIMUM_SAMPLE_COUNT = 100;
@@ -182,6 +192,7 @@ export function recordPaperFuturesExit(
     stopLossPrice: number;
     realizedPnl: number;
     asOf: string;
+    adaptiveStrategyId?: AggressiveFuturesStrategyId;
   },
   reviewThreshold = 3,
   autoReviewEnabled = true,
@@ -189,12 +200,24 @@ export function recordPaperFuturesExit(
   const performance = {
     ...current,
     recentStopLosses: [...current.recentStopLosses],
+    adaptiveStrategy:
+      current.adaptiveStrategy ?? emptyAdaptiveFuturesStrategyState(),
   };
   performance.closedTrades += 1;
   performance.realizedPnl = Math.round((performance.realizedPnl + input.realizedPnl) * 100) / 100;
   if (input.realizedPnl > 0) performance.wins += 1;
   else if (input.realizedPnl < 0) performance.losses += 1;
   else performance.breakeven += 1;
+  if (input.adaptiveStrategyId) {
+    performance.adaptiveStrategy = recordAdaptiveFuturesStrategyOutcome(
+      performance.adaptiveStrategy,
+      {
+        strategyId: input.adaptiveStrategyId,
+        realizedPnl: input.realizedPnl,
+        exitReason: input.exitReason,
+      },
+    );
+  }
 
   if (input.exitReason === "stop_loss") {
     if (performance.consecutiveStopLosses === 0) performance.stopLossStreakId += 1;
