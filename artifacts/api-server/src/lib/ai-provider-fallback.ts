@@ -5,6 +5,11 @@ import {
   releaseProviderSlot,
   setProviderCooldown,
 } from "./ai-provider-coordination.js";
+import {
+  isReplitAiFallbackConfigured,
+  isVercelProductionReplitAiEnabled,
+  requestReplitAiCompletion,
+} from "./replit-ai-bridge.js";
 
 const DEFAULT_PROVIDER_TIMEOUT_MS = 15_000;
 const DEFAULT_FALLBACK_BUDGET_MS = 12_000;
@@ -31,6 +36,7 @@ type AiProviderFallbackRequest = {
   allowedProviders?: readonly AiProviderName[];
   timeoutMs?: number;
   maxFallbackDurationMs?: number;
+  replitTimeoutMs?: number;
   geminiTimeoutMs?: number;
   geminiModelTimeoutMs?: number;
   geminiModels?: readonly string[];
@@ -60,6 +66,7 @@ export type AiProviderName =
   | "ollama"
   | "openrouter"
   | "gemini"
+  | "replit"
   | "nvidia_nim";
 
 export type AiProviderResult = {
@@ -255,6 +262,12 @@ function providerTimeoutMs(
         request.timeoutMs ??
         DEFAULT_PROVIDER_TIMEOUT_MS
       );
+    case "replit":
+      return (
+        request.replitTimeoutMs ??
+        request.timeoutMs ??
+        DEFAULT_PROVIDER_TIMEOUT_MS
+      );
     case "nvidia_nim":
       return (
         request.nvidiaNimTimeoutMs ??
@@ -304,6 +317,7 @@ function requestWithProviderTimeout(
   return {
     ...request,
     timeoutMs,
+    replitTimeoutMs: timeoutMs,
     geminiTimeoutMs: timeoutMs,
     nvidiaNimTimeoutMs: timeoutMs,
     oneMinAiTimeoutMs: timeoutMs,
@@ -485,6 +499,36 @@ function normalizeStructuredJsonOutput(
   }
 
   return candidates[0] ?? fencedJson ?? cleaned;
+}
+
+function replitSchemaName(operation: string): string {
+  const safeOperation = operation
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return `ai_${safeOperation || "completion"}`.slice(0, 64);
+}
+
+async function generateReplit(
+  request: AiProviderFallbackRequest,
+): Promise<AiProviderResult> {
+  const responseText = await requestReplitAiCompletion(
+    request.input,
+    requestInstructions(request),
+    replitSchemaName(request.operation),
+    request.schema,
+    request.signal,
+  );
+  const text = normalizeStructuredJsonOutput(
+    responseText,
+    request.validateOutput,
+  );
+  if (!text) throw new Error("Replit AI 沒有回傳可用內容。");
+  if (request.validateOutput && !request.validateOutput(text)) {
+    request.onInvalidOutput?.(text);
+    throw new Error("Replit AI 回傳內容未通過格式驗證。");
+  }
+  return { text, provider: "replit" };
 }
 
 const GEMINI_MODEL = "gemini-3.5-flash-lite";
@@ -1268,6 +1312,8 @@ export function resolveAiProviderFallbackBudgetMs(
     ? 30_000
     : request.operation === "market_ai_daily_summary"
       ? 24_000
+      : request.operation === "futures_day_strategy"
+        ? 25_000
       : request.operation.startsWith("quant_")
         ? 16_000
         : 12_000;
@@ -1292,6 +1338,7 @@ export async function withAiProviderFallback(
     provider: AiProviderName;
     label: string;
     apiKey: string | undefined;
+    configured?: boolean;
     timeoutMs: number;
     run: (attemptRequest: AiProviderFallbackRequest) => Promise<AiProviderResult>;
   }> = [
@@ -1305,6 +1352,17 @@ export async function withAiProviderFallback(
       timeoutMs: providerTimeoutMs("gemini", request),
       run: (attemptRequest) =>
         generateGemini(geminiApiKey ?? "", attemptRequest),
+    },
+    {
+      provider: "replit",
+      label: "Replit AI",
+      apiKey: undefined,
+      configured: request.operation === "futures_day_strategy" && (
+        isVercelProductionReplitAiEnabled() ||
+        (!process.env.VERCEL_ENV && isReplitAiFallbackConfigured())
+      ),
+      timeoutMs: providerTimeoutMs("replit", request),
+      run: generateReplit,
     },
     {
       provider: "nvidia_nim",
@@ -1359,19 +1417,26 @@ export async function withAiProviderFallback(
   const providerByName = new Map(
     providers.map((provider) => [provider.provider, provider]),
   );
-  const orderedProviders = request.allowedProviders
-    ? [...new Set(request.allowedProviders)].flatMap((providerName) => {
-        const provider = providerByName.get(providerName);
-        return provider ? [provider] : [];
-      })
-    : (["groq", "gemini", "openrouter"] as AiProviderName[]).flatMap(
-        (providerName) => {
-          const provider = providerByName.get(providerName);
-          return provider ? [provider] : [];
-        },
-      );
+  const requestedProviderOrder = request.allowedProviders
+    ? [...new Set(request.allowedProviders)]
+    : (["groq", "gemini", "openrouter"] as AiProviderName[]);
+  const providerOrder =
+    request.operation === "futures_day_strategy" &&
+    isVercelProductionReplitAiEnabled()
+      ? [
+          "gemini",
+          "replit",
+          ...requestedProviderOrder.filter(
+            (providerName) => providerName !== "gemini" && providerName !== "replit",
+          ),
+        ] as AiProviderName[]
+      : requestedProviderOrder;
+  const orderedProviders = providerOrder.flatMap((providerName) => {
+    const provider = providerByName.get(providerName);
+    return provider ? [provider] : [];
+  });
   const configuredProviders = orderedProviders.filter(
-    ({ apiKey }) => apiKey,
+    ({ apiKey, configured }) => configured ?? Boolean(apiKey),
   );
   if (configuredProviders.length === 0) {
     throw new AiProviderFallbackError(

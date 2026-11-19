@@ -31,6 +31,9 @@ const providerEnvKeys = [
   "GEMINI_API_KEY",
   "NVIDIA_NIM_API_KEY",
   "AI_PROVIDER_COORDINATION_MODE",
+  "VERCEL_ENV",
+  "REPLIT_AI_BRIDGE_URL",
+  "REPLIT_AI_BRIDGE_TOKEN",
 ];
 
 function saveProviderEnv() {
@@ -95,6 +98,10 @@ test("grants market summaries a longer but bounded AI fallback window", () => {
     operation: "quant_research_summary",
     maxFallbackDurationMs: 60_000,
   }), 16_000);
+  assert.equal(resolveAiProviderFallbackBudgetMs({
+    operation: "futures_day_strategy",
+    maxFallbackDurationMs: 60_000,
+  }), 25_000);
   assert.equal(resolveAiProviderFallbackBudgetMs({
     operation: "stock_research_agent",
     requestId: "stock-research-agent:scheduled",
@@ -199,6 +206,108 @@ test("shared provider route tries Gemini then OpenRouter after Groq fails", asyn
     assert.equal(calls[2].body.model, "nvidia/nemotron-3-ultra-550b-a55b:free");
     assert.equal(result.provider, "openrouter");
     assert.equal(result.text, '{"ok":true}');
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreProviderEnv(savedEnv);
+  }
+});
+
+test("futures strategy falls back to Replit after its existing providers", async () => {
+  const savedEnv = saveProviderEnv();
+  const originalFetch = globalThis.fetch;
+  configureTestProviders();
+  process.env.REPLIT_AI_BRIDGE_URL = "https://replit-bridge.example/api/market/replit-ai-summary";
+  process.env.REPLIT_AI_BRIDGE_TOKEN = "test-bridge-token";
+  const calls = [];
+  globalThis.fetch = async (input, init) => {
+    const request = await readFetchRequest(input, init);
+    calls.push(request);
+    if (request.url.includes("api.groq.com")) return chatResponse("", 429);
+    if (request.url.includes("generativelanguage.googleapis.com")) return chatResponse("", 504);
+    if (request.url.includes("openrouter.ai")) return chatResponse("", 504);
+    if (request.url.endsWith("/api/market/replit-ai-completion")) {
+      assert.equal(request.headers.authorization, "Bearer test-bridge-token");
+      return new Response(JSON.stringify({ output: "{\"ok\":true}" }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`Unexpected provider URL: ${request.url}`);
+  };
+  try {
+    const result = await withAiProviderFallback(makeRequest("futures_day_strategy", {
+      allowedProviders: ["groq", "gemini", "openrouter", "replit"],
+      validateOutput: (text) => text === "{\"ok\":true}",
+    }));
+    assert.deepEqual(calls.map(({ url }) =>
+      url.includes("api.groq.com") ? "groq" :
+      url.includes("generativelanguage.googleapis.com") ? "gemini" :
+      url.includes("openrouter.ai") ? "openrouter" : "replit",
+    ), ["groq", "gemini", "openrouter", "replit"]);
+    assert.equal(result.provider, "replit");
+    assert.equal(result.text, "{\"ok\":true}");
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreProviderEnv(savedEnv);
+  }
+});
+
+test("Vercel Production tries Replit second only for futures strategy", async () => {
+  const savedEnv = saveProviderEnv();
+  const originalFetch = globalThis.fetch;
+  configureTestProviders();
+  process.env.VERCEL_ENV = "production";
+  process.env.REPLIT_AI_BRIDGE_URL = "https://replit-bridge.example/api/market/replit-ai-summary";
+  process.env.REPLIT_AI_BRIDGE_TOKEN = "test-bridge-token";
+  const calls = [];
+  globalThis.fetch = async (input, init) => {
+    const request = await readFetchRequest(input, init);
+    calls.push(request.url);
+    if (request.url.includes("generativelanguage.googleapis.com")) return chatResponse("", 504);
+    if (request.url.endsWith("/api/market/replit-ai-completion")) {
+      return new Response(JSON.stringify({ output: "{\"ok\":true}" }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`Unexpected provider URL: ${request.url}`);
+  };
+  try {
+    const result = await withAiProviderFallback(makeRequest("futures_day_strategy", {
+      allowedProviders: ["groq", "gemini", "openrouter", "replit"],
+      validateOutput: (text) => text === "{\"ok\":true}",
+    }));
+    assert.deepEqual(calls.map((url) =>
+      url.includes("generativelanguage.googleapis.com") ? "gemini" : "replit",
+    ), ["gemini", "replit"]);
+    assert.equal(result.provider, "replit");
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreProviderEnv(savedEnv);
+  }
+});
+
+test("Vercel Preview keeps the existing futures provider order", async () => {
+  const savedEnv = saveProviderEnv();
+  const originalFetch = globalThis.fetch;
+  configureTestProviders();
+  process.env.VERCEL_ENV = "preview";
+  process.env.REPLIT_AI_BRIDGE_URL = "https://replit-bridge.example/api/market/replit-ai-summary";
+  process.env.REPLIT_AI_BRIDGE_TOKEN = "test-bridge-token";
+  const calls = [];
+  globalThis.fetch = async (input, init) => {
+    const request = await readFetchRequest(input, init);
+    calls.push(request.url);
+    if (request.url.includes("api.groq.com")) return chatResponse("", 503);
+    if (request.url.includes("generativelanguage.googleapis.com")) return chatResponse("", 503);
+    if (request.url.includes("openrouter.ai")) return chatResponse("{\"ok\":true}");
+    throw new Error(`Unexpected provider URL: ${request.url}`);
+  };
+  try {
+    const result = await withAiProviderFallback(makeRequest("futures_day_strategy", {
+      allowedProviders: ["groq", "gemini", "openrouter", "replit"],
+      validateOutput: (text) => text === "{\"ok\":true}",
+    }));
+    assert.equal(result.provider, "openrouter");
+    assert.deepEqual(calls, [
+      "https://api.groq.com/openai/v1/chat/completions",
+      "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+      "https://openrouter.ai/api/v1/chat/completions",
+    ]);
   } finally {
     globalThis.fetch = originalFetch;
     restoreProviderEnv(savedEnv);
