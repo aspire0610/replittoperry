@@ -966,7 +966,7 @@ export async function getFuturesAiDayStrategy(
   try {
     aiResponse = await withAiProviderFallback({
       operation: "futures_day_strategy",
-      allowedProviders: ["groq", "gemini", "openrouter"],
+      allowedProviders: ["groq", "gemini", "openrouter", "replit"],
       instructions: strategyInstructions(entryMode, forceEntryMode, adjustmentFeedback),
       input: JSON.stringify(marketContext),
       schema: outputSchema,
@@ -984,7 +984,8 @@ export async function getFuturesAiDayStrategy(
       timeoutMs: 5_000,
       groqTimeoutMs: 4_000,
       geminiTimeoutMs: 8_000,
-      maxFallbackDurationMs: 10_000,
+      maxFallbackDurationMs: 25_000,
+      replitTimeoutMs: 12_000,
       openRouterTimeoutMs: 5_000,
     });
   } catch (error) {
