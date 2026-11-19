@@ -3237,3 +3237,456 @@ limit?: number;
 offset?: number;
 };
 
+export type FuturesDayIntradayStatus = typeof FuturesDayIntradayStatus[keyof typeof FuturesDayIntradayStatus];
+
+
+export const FuturesDayIntradayStatus = {
+  live: 'live',
+  warming_up: 'warming_up',
+  closed: 'closed',
+  unavailable: 'unavailable',
+} as const;
+
+export type FuturesDayIntradaySignal = typeof FuturesDayIntradaySignal[keyof typeof FuturesDayIntradaySignal];
+
+
+export const FuturesDayIntradaySignal = {
+  bullish_cross: 'bullish_cross',
+  bearish_cross: 'bearish_cross',
+  no_cross: 'no_cross',
+  insufficient: 'insufficient',
+} as const;
+
+export interface FuturesMinuteBar {
+  time: string;
+  /** @exclusiveMinimum 0 */
+  open: number;
+  /** @exclusiveMinimum 0 */
+  high: number;
+  /** @exclusiveMinimum 0 */
+  low: number;
+  /** @exclusiveMinimum 0 */
+  close: number;
+}
+
+export type FuturesDailyHistoryStatus = typeof FuturesDailyHistoryStatus[keyof typeof FuturesDailyHistoryStatus];
+
+
+export const FuturesDailyHistoryStatus = {
+  available: 'available',
+  insufficient: 'insufficient',
+  unavailable: 'unavailable',
+} as const;
+
+export interface FuturesDailyBar {
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  date: string;
+  /** @pattern ^\d{6}$ */
+  contractMonth: string;
+  /** @exclusiveMinimum 0 */
+  open: number;
+  /** @exclusiveMinimum 0 */
+  high: number;
+  /** @exclusiveMinimum 0 */
+  low: number;
+  /** @exclusiveMinimum 0 */
+  close: number;
+}
+
+export interface FuturesDailyHistory {
+  status: FuturesDailyHistoryStatus;
+  bars: FuturesDailyBar[];
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  atr14: number | null;
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  atr14By4: number | null;
+  /** @nullable */
+  asOf: string | null;
+  source: string;
+}
+
+export interface FuturesDayIntraday {
+  status: FuturesDayIntradayStatus;
+  /** @nullable */
+  symbol: string | null;
+  /** @pattern ^\d{8}$ */
+  date: string;
+  bars: FuturesMinuteBar[];
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  k: number | null;
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  d: number | null;
+  signal: FuturesDayIntradaySignal;
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  price: number | null;
+  /** @nullable */
+  change: number | null;
+  /** @nullable */
+  changePercent: number | null;
+  /** @nullable */
+  asOf: string | null;
+  source: string;
+  dailyHistory: FuturesDailyHistory;
+}
+
+export type PaperAutomationSettingsInputFuturesContract = typeof PaperAutomationSettingsInputFuturesContract[keyof typeof PaperAutomationSettingsInputFuturesContract];
+
+
+export const PaperAutomationSettingsInputFuturesContract = {
+  TX: 'TX',
+  MTX: 'MTX',
+  TMF: 'TMF',
+} as const;
+
+export type PaperAutomationSettingsInputFuturesEntryMode = typeof PaperAutomationSettingsInputFuturesEntryMode[keyof typeof PaperAutomationSettingsInputFuturesEntryMode];
+
+
+export const PaperAutomationSettingsInputFuturesEntryMode = {
+  aggressive: 'aggressive',
+  convergent: 'convergent',
+} as const;
+
+export interface PaperAutomationSettingsInput {
+  /**
+     * @minimum 100000
+     * @maximum 100000000
+     */
+  startingCash: number;
+  /**
+     * @minimum 0.1
+     * @maximum 1
+     */
+  riskPerTradePercent: number;
+  /**
+     * @minimum 0.5
+     * @maximum 5
+     */
+  dailyLossLimitPercent: number;
+  /**
+     * @minimum 1
+     * @maximum 5
+     */
+  maxOpenPositions: number;
+  futuresEnabled: boolean;
+  futuresContract: PaperAutomationSettingsInputFuturesContract;
+  futuresEntryMode: PaperAutomationSettingsInputFuturesEntryMode;
+  futuresForceEntryEnabled?: boolean;
+}
+
+export interface PaperAutomationStatusInput {
+  enabled: boolean;
+}
+
+export type PaperAutomationPositionAssetClass = typeof PaperAutomationPositionAssetClass[keyof typeof PaperAutomationPositionAssetClass];
+
+
+export const PaperAutomationPositionAssetClass = {
+  equity: 'equity',
+  futures: 'futures',
+} as const;
+
+export type PaperAutomationPositionContractType = typeof PaperAutomationPositionContractType[keyof typeof PaperAutomationPositionContractType];
+
+
+export const PaperAutomationPositionContractType = {
+  TX: 'TX',
+  MTX: 'MTX',
+  TMF: 'TMF',
+} as const;
+
+export type PaperAutomationPositionDirection = typeof PaperAutomationPositionDirection[keyof typeof PaperAutomationPositionDirection];
+
+
+export const PaperAutomationPositionDirection = {
+  long: 'long',
+  short: 'short',
+} as const;
+
+export interface PaperAutomationPosition {
+  id: string;
+  agentId: string;
+  ticker: string;
+  name: string;
+  shares: number;
+  assetClass?: PaperAutomationPositionAssetClass;
+  contractType?: PaperAutomationPositionContractType;
+  direction?: PaperAutomationPositionDirection;
+  contractMultiplier?: number;
+  entryPrice: number;
+  stopLossPrice: number;
+  takeProfitPrice: number;
+  entryAt: string;
+  signalAsOf: string;
+  quoteSource: string;
+  lastPrice: number;
+  lastQuoteAt: string;
+}
+
+export type PaperAutomationPendingEntryAssetClass = typeof PaperAutomationPendingEntryAssetClass[keyof typeof PaperAutomationPendingEntryAssetClass];
+
+
+export const PaperAutomationPendingEntryAssetClass = {
+  equity: 'equity',
+  futures: 'futures',
+} as const;
+
+export type PaperAutomationPendingEntryContractType = typeof PaperAutomationPendingEntryContractType[keyof typeof PaperAutomationPendingEntryContractType];
+
+
+export const PaperAutomationPendingEntryContractType = {
+  TX: 'TX',
+  MTX: 'MTX',
+  TMF: 'TMF',
+} as const;
+
+export type PaperAutomationPendingEntryDirection = typeof PaperAutomationPendingEntryDirection[keyof typeof PaperAutomationPendingEntryDirection];
+
+
+export const PaperAutomationPendingEntryDirection = {
+  long: 'long',
+  short: 'short',
+} as const;
+
+export interface PaperAutomationPendingEntry {
+  id: string;
+  agentId: string;
+  ticker: string;
+  name: string;
+  assetClass?: PaperAutomationPendingEntryAssetClass;
+  contractType?: PaperAutomationPendingEntryContractType;
+  direction?: PaperAutomationPendingEntryDirection;
+  contractMultiplier?: number;
+  forcedEntry?: boolean;
+  entryPrice: number;
+  stopLossPrice: number;
+  takeProfitPrice: number;
+  signalAsOf: string;
+  marketDate: string;
+  expiresAt: string;
+}
+
+export type PaperAutomationEventAssetClass = typeof PaperAutomationEventAssetClass[keyof typeof PaperAutomationEventAssetClass];
+
+
+export const PaperAutomationEventAssetClass = {
+  equity: 'equity',
+  futures: 'futures',
+} as const;
+
+export type PaperAutomationEventContractType = typeof PaperAutomationEventContractType[keyof typeof PaperAutomationEventContractType];
+
+
+export const PaperAutomationEventContractType = {
+  TX: 'TX',
+  MTX: 'MTX',
+  TMF: 'TMF',
+} as const;
+
+export type PaperAutomationEventDirection = typeof PaperAutomationEventDirection[keyof typeof PaperAutomationEventDirection];
+
+
+export const PaperAutomationEventDirection = {
+  long: 'long',
+  short: 'short',
+} as const;
+
+export type PaperAutomationEventExitReason = typeof PaperAutomationEventExitReason[keyof typeof PaperAutomationEventExitReason];
+
+
+export const PaperAutomationEventExitReason = {
+  take_profit: 'take_profit',
+  stop_loss: 'stop_loss',
+  session_end: 'session_end',
+} as const;
+
+export type PaperAutomationEventKind = typeof PaperAutomationEventKind[keyof typeof PaperAutomationEventKind];
+
+
+export const PaperAutomationEventKind = {
+  signal_queued: 'signal_queued',
+  entry_filled: 'entry_filled',
+  exit_filled: 'exit_filled',
+  skipped: 'skipped',
+  halted: 'halted',
+} as const;
+
+/**
+ * @nullable
+ */
+export type PaperAutomationEventSide = typeof PaperAutomationEventSide[keyof typeof PaperAutomationEventSide] | null;
+
+
+export const PaperAutomationEventSide = {
+  buy: 'buy',
+  sell: 'sell',
+} as const;
+
+export interface PaperAutomationEvent {
+  id: string;
+  /** @nullable */
+  agentId: string | null;
+  /** @nullable */
+  ticker: string | null;
+  assetClass?: PaperAutomationEventAssetClass;
+  contractType?: PaperAutomationEventContractType;
+  direction?: PaperAutomationEventDirection;
+  /** @nullable */
+  contracts?: number | null;
+  exitReason?: PaperAutomationEventExitReason;
+  entryPrice?: number;
+  stopLossPrice?: number;
+  realizedPnl?: number;
+  kind: PaperAutomationEventKind;
+  /** @nullable */
+  side: PaperAutomationEventSide;
+  /** @nullable */
+  shares: number | null;
+  /** @nullable */
+  price: number | null;
+  asOf: string;
+  reason: string;
+}
+
+export type PaperFuturesEvaluationStatus = typeof PaperFuturesEvaluationStatus[keyof typeof PaperFuturesEvaluationStatus];
+
+
+export const PaperFuturesEvaluationStatus = {
+  ready: 'ready',
+  waiting: 'waiting',
+  blocked: 'blocked',
+  unavailable: 'unavailable',
+  inactive: 'inactive',
+} as const;
+
+/**
+ * @nullable
+ */
+export type PaperFuturesEvaluationAction = typeof PaperFuturesEvaluationAction[keyof typeof PaperFuturesEvaluationAction] | null;
+
+
+export const PaperFuturesEvaluationAction = {
+  long: 'long',
+  short: 'short',
+  wait: 'wait',
+  insufficient: 'insufficient',
+} as const;
+
+/**
+ * @nullable
+ */
+export type PaperFuturesEvaluationDirection = typeof PaperFuturesEvaluationDirection[keyof typeof PaperFuturesEvaluationDirection] | null;
+
+
+export const PaperFuturesEvaluationDirection = {
+  long: 'long',
+  short: 'short',
+} as const;
+
+export interface PaperFuturesEvaluation {
+  id: string;
+  asOf: string;
+  status: PaperFuturesEvaluationStatus;
+  /** @nullable */
+  action: PaperFuturesEvaluationAction;
+  /** @nullable */
+  direction: PaperFuturesEvaluationDirection;
+  /** @nullable */
+  price: number | null;
+  /** @nullable */
+  entryPrice: number | null;
+  /** @nullable */
+  stopLossPrice: number | null;
+  /** @nullable */
+  targetPrice: number | null;
+  reason: string;
+}
+
+export type PaperFuturesPerformanceAdjustmentStatus = typeof PaperFuturesPerformanceAdjustmentStatus[keyof typeof PaperFuturesPerformanceAdjustmentStatus];
+
+
+export const PaperFuturesPerformanceAdjustmentStatus = {
+  idle: 'idle',
+  pending: 'pending',
+  applied: 'applied',
+} as const;
+
+export interface PaperFuturesPerformance {
+  closedTrades: number;
+  wins: number;
+  losses: number;
+  breakeven: number;
+  realizedPnl: number;
+  /** @nullable */
+  winRatePercent: number | null;
+  consecutiveStopLosses: number;
+  adjustmentStatus: PaperFuturesPerformanceAdjustmentStatus;
+  /** @nullable */
+  adjustmentAt: string | null;
+  adjustmentMessage: string;
+}
+
+export type PaperAutomationDashboardFuturesContract = typeof PaperAutomationDashboardFuturesContract[keyof typeof PaperAutomationDashboardFuturesContract];
+
+
+export const PaperAutomationDashboardFuturesContract = {
+  TX: 'TX',
+  MTX: 'MTX',
+  TMF: 'TMF',
+} as const;
+
+export type PaperAutomationDashboardFuturesEntryMode = typeof PaperAutomationDashboardFuturesEntryMode[keyof typeof PaperAutomationDashboardFuturesEntryMode];
+
+
+export const PaperAutomationDashboardFuturesEntryMode = {
+  aggressive: 'aggressive',
+  convergent: 'convergent',
+} as const;
+
+export interface PaperAutomationDashboard {
+  initialized: boolean;
+  enabled: boolean;
+  /** @nullable */
+  startingCash: number | null;
+  /** @nullable */
+  cash: number | null;
+  /** @nullable */
+  equity: number | null;
+  riskPerTradePercent: number;
+  dailyLossLimitPercent: number;
+  maxOpenPositions: number;
+  futuresEnabled: boolean;
+  futuresContract: PaperAutomationDashboardFuturesContract;
+  futuresEntryMode: PaperAutomationDashboardFuturesEntryMode;
+  futuresForceEntryEnabled: boolean;
+  dailyStopTriggered: boolean;
+  /** @nullable */
+  dailyStartEquity: number | null;
+  positions: PaperAutomationPosition[];
+  pendingEntries: PaperAutomationPendingEntry[];
+  /** @maxItems 100 */
+  events: PaperAutomationEvent[];
+  currentFuturesEvaluation: PaperFuturesEvaluation | null;
+  /** @maxItems 25 */
+  futuresDecisionLogs: PaperFuturesEvaluation[];
+  futuresPerformance: PaperFuturesPerformance;
+  /** @nullable */
+  lastProcessedAt: string | null;
+  disclaimer: string;
+}

@@ -21,6 +21,7 @@ export * from "./stock-ai-conversations";
 export * from "./line-assistant-conversations";
 export * from "./quant-research";
 export * from "./paper-trading";
+export * from "./paper-trading-automation";
 export * from "./stock-ai-direction-forecasts";
 export * from "./stock-ai-price-plan-forecasts";
 export * from "./stock-ai-historical-validation";

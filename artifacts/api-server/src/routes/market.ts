@@ -27,6 +27,7 @@ import {
   GetMarketSummaryResponse,
   GetMarketAiDailySummaryResponse,
   GetFuturesAiDayStrategyResponse,
+  GetFuturesDayIntradayResponse,
   GetStockHistoryQueryParams,
   GetStockHistoryResponse,
   GetStockResearchDataQueryParams,
@@ -60,6 +61,7 @@ import {
 } from "../lib/stock-ai-assessment.js";
 import { askAssistantChat } from "../lib/assistant-chat.js";
 import { getFuturesAiDayStrategy } from "../lib/futures-ai-day-strategy.js";
+import { fetchFuturesDayIntraday } from "../lib/futures-day-intraday.js";
 import { getStockResearchData } from "../lib/stock-research-data.js";
 import { getMarketAiDailySummary } from "../lib/market-ai-daily-summary.js";
 import { getMarketChecklist } from "../lib/market-checklist.js";
@@ -247,6 +249,12 @@ router.get("/futures/ai-day-strategy", async (req, res): Promise<void> => {
       "Unable to generate Taiwan index futures day strategy",
     );
   }
+});
+
+router.get("/futures/day-intraday", async (_req, res): Promise<void> => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  const intraday = await fetchFuturesDayIntraday();
+  res.json(GetFuturesDayIntradayResponse.parse(intraday));
 });
 
 router.get("/market/intraday", async (req, res): Promise<void> => {

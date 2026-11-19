@@ -44,6 +44,10 @@
       "destination": "/api/account/quant-research-interpret"
     },
     {
+      "source": "/api/account/paper-trading/automation/status",
+      "destination": "/api/account/paper-trading/automation?__route=/api/account/paper-trading/automation/status"
+    },
+    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }

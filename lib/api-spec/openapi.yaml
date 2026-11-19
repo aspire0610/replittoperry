@@ -1649,7 +1649,396 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /futures/day-intraday:
+    get:
+      operationId: getFuturesDayIntraday
+      tags: [market]
+      summary: Get observed Taiwan index futures day-session minute bars
+      description: Returns observed session minute bars and locally calculated KD, plus the 15 most recent complete official TAIFEX TX day-session OHLC bars and their daily ATR14/4.
+      responses:
+        "200":
+          description: Observed futures minute data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FuturesDayIntraday"
+
+  /account/paper-trading/automation:
+    get:
+      operationId: getAccountPaperTradingAutomation
+      tags: [quant]
+      summary: Get the signed-in user's autonomous paper-trading state
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Simulation settings, positions, pending entries, and event history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaperAutomationDashboard"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: putAccountPaperTradingAutomation
+      tags: [quant]
+      summary: Create or update autonomous paper-trading risk settings
+      description: Updates a paper-only simulation account. It never connects to a broker or sends real orders.
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaperAutomationSettingsInput"
+      responses:
+        "200":
+          description: Saved simulation settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaperAutomationDashboard"
+        "201":
+          description: Created simulation account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaperAutomationDashboard"
+        "400":
+          description: Invalid settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /account/paper-trading/automation/status:
+    patch:
+      operationId: patchAccountPaperTradingAutomationStatus
+      tags: [quant]
+      summary: Enable or pause autonomous paper trading
+      description: Simulated orders only. Enabling requires either an active stock research agent or Taiwan futures automation.
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaperAutomationStatusInput"
+      responses:
+        "200":
+          description: Updated simulation status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaperAutomationDashboard"
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Account or active research agent is missing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
+    FuturesDayIntraday:
+      type: object
+      required: [status, symbol, date, bars, k, d, signal, price, change, changePercent, asOf, source, dailyHistory]
+      properties:
+        status:
+          type: string
+          enum: [live, warming_up, closed, unavailable]
+        symbol:
+          type: ["string", "null"]
+        date:
+          type: string
+          pattern: "^\\d{8}$"
+        bars:
+          type: array
+          items:
+            $ref: "#/components/schemas/FuturesMinuteBar"
+        k: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        d: { type: ["number", "null"], minimum: 0, maximum: 100 }
+        signal:
+          type: string
+          enum: [bullish_cross, bearish_cross, no_cross, insufficient]
+        price: { type: ["number", "null"], exclusiveMinimum: 0 }
+        change: { type: ["number", "null"] }
+        changePercent: { type: ["number", "null"] }
+        asOf:
+          type: ["string", "null"]
+          format: date-time
+        source: { type: string }
+        dailyHistory:
+          $ref: "#/components/schemas/FuturesDailyHistory"
+
+    FuturesDailyHistory:
+      type: object
+      required: [status, bars, atr14, atr14By4, asOf, source]
+      properties:
+        status:
+          type: string
+          enum: [available, insufficient, unavailable]
+        bars:
+          type: array
+          items:
+            $ref: "#/components/schemas/FuturesDailyBar"
+        atr14: { type: ["number", "null"], exclusiveMinimum: 0 }
+        atr14By4: { type: ["number", "null"], exclusiveMinimum: 0 }
+        asOf:
+          type: ["string", "null"]
+        source: { type: string }
+
+    FuturesDailyBar:
+      type: object
+      required: [date, contractMonth, open, high, low, close]
+      properties:
+        date: { type: string, pattern: "^\\d{4}-\\d{2}-\\d{2}$" }
+        contractMonth: { type: string, pattern: "^\\d{6}$" }
+        open: { type: number, exclusiveMinimum: 0 }
+        high: { type: number, exclusiveMinimum: 0 }
+        low: { type: number, exclusiveMinimum: 0 }
+        close: { type: number, exclusiveMinimum: 0 }
+
+    FuturesMinuteBar:
+      type: object
+      required: [time, open, high, low, close]
+      properties:
+        time: { type: string, format: date-time }
+        open: { type: number, exclusiveMinimum: 0 }
+        high: { type: number, exclusiveMinimum: 0 }
+        low: { type: number, exclusiveMinimum: 0 }
+        close: { type: number, exclusiveMinimum: 0 }
+
+    PaperAutomationSettingsInput:
+      type: object
+      additionalProperties: false
+      properties:
+        startingCash:
+          type: number
+          minimum: 100000
+          maximum: 100000000
+        riskPerTradePercent:
+          type: number
+          minimum: 0.1
+          maximum: 1
+        dailyLossLimitPercent:
+          type: number
+          minimum: 0.5
+          maximum: 5
+        maxOpenPositions:
+          type: integer
+          minimum: 1
+          maximum: 5
+        futuresEnabled:
+          type: boolean
+        futuresContract:
+          type: string
+          enum: [TX, MTX, TMF]
+        futuresEntryMode:
+          type: string
+          enum: [aggressive, convergent]
+        futuresForceEntryEnabled:
+          type: boolean
+      required: [startingCash, riskPerTradePercent, dailyLossLimitPercent, maxOpenPositions, futuresEnabled, futuresContract, futuresEntryMode]
+
+    PaperAutomationStatusInput:
+      type: object
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+      required: [enabled]
+
+    PaperAutomationPosition:
+      type: object
+      additionalProperties: false
+      properties:
+        id: { type: string }
+        agentId: { type: string }
+        ticker: { type: string }
+        name: { type: string }
+        shares: { type: integer }
+        assetClass:
+          type: string
+          enum: [equity, futures]
+        contractType:
+          type: string
+          enum: [TX, MTX, TMF]
+        direction:
+          type: string
+          enum: [long, short]
+        contractMultiplier: { type: number }
+        entryPrice: { type: number }
+        stopLossPrice: { type: number }
+        takeProfitPrice: { type: number }
+        entryAt: { type: string, format: date-time }
+        signalAsOf: { type: string, format: date-time }
+        quoteSource: { type: string }
+        lastPrice: { type: number }
+        lastQuoteAt: { type: string, format: date-time }
+      required: [id, agentId, ticker, name, shares, entryPrice, stopLossPrice, takeProfitPrice, entryAt, signalAsOf, quoteSource, lastPrice, lastQuoteAt]
+
+    PaperAutomationPendingEntry:
+      type: object
+      additionalProperties: false
+      properties:
+        id: { type: string }
+        agentId: { type: string }
+        ticker: { type: string }
+        name: { type: string }
+        assetClass:
+          type: string
+          enum: [equity, futures]
+        contractType:
+          type: string
+          enum: [TX, MTX, TMF]
+        direction:
+          type: string
+          enum: [long, short]
+        contractMultiplier: { type: number }
+        forcedEntry: { type: boolean }
+        entryPrice: { type: number }
+        stopLossPrice: { type: number }
+        takeProfitPrice: { type: number }
+        signalAsOf: { type: string, format: date-time }
+        marketDate: { type: string, format: date }
+        expiresAt: { type: string, format: date-time }
+      required: [id, agentId, ticker, name, entryPrice, stopLossPrice, takeProfitPrice, signalAsOf, marketDate, expiresAt]
+
+    PaperAutomationEvent:
+      type: object
+      additionalProperties: false
+      properties:
+        id: { type: string }
+        agentId: { type: ["string", "null"] }
+        ticker: { type: ["string", "null"] }
+        assetClass:
+          type: string
+          enum: [equity, futures]
+        contractType:
+          type: string
+          enum: [TX, MTX, TMF]
+        direction:
+          type: string
+          enum: [long, short]
+        contracts: { type: ["integer", "null"] }
+        exitReason:
+          type: string
+          enum: [take_profit, stop_loss, session_end]
+        entryPrice: { type: number }
+        stopLossPrice: { type: number }
+        realizedPnl: { type: number }
+        kind: { type: string, enum: [signal_queued, entry_filled, exit_filled, skipped, halted] }
+        side: { type: ["string", "null"], enum: [buy, sell, null] }
+        shares: { type: ["integer", "null"] }
+        price: { type: ["number", "null"] }
+        asOf: { type: string, format: date-time }
+        reason: { type: string }
+      required: [id, agentId, ticker, kind, side, shares, price, asOf, reason]
+
+    PaperFuturesEvaluation:
+      type: object
+      additionalProperties: false
+      properties:
+        id: { type: string }
+        asOf: { type: string, format: date-time }
+        status: { type: string, enum: [ready, waiting, blocked, unavailable, inactive] }
+        action:
+          type: ["string", "null"]
+          enum: [long, short, wait, insufficient, null]
+        direction:
+          type: ["string", "null"]
+          enum: [long, short, null]
+        price: { type: ["number", "null"] }
+        entryPrice: { type: ["number", "null"] }
+        stopLossPrice: { type: ["number", "null"] }
+        targetPrice: { type: ["number", "null"] }
+        reason: { type: string }
+      required: [id, asOf, status, action, direction, price, entryPrice, stopLossPrice, targetPrice, reason]
+
+    PaperFuturesPerformance:
+      type: object
+      additionalProperties: false
+      properties:
+        closedTrades: { type: integer }
+        wins: { type: integer }
+        losses: { type: integer }
+        breakeven: { type: integer }
+        realizedPnl: { type: number }
+        winRatePercent: { type: ["number", "null"] }
+        consecutiveStopLosses: { type: integer }
+        adjustmentStatus: { type: string, enum: [idle, pending, applied] }
+        adjustmentAt: { type: ["string", "null"], format: date-time }
+        adjustmentMessage: { type: string }
+      required: [closedTrades, wins, losses, breakeven, realizedPnl, winRatePercent, consecutiveStopLosses, adjustmentStatus, adjustmentAt, adjustmentMessage]
+
+    PaperAutomationDashboard:
+      type: object
+      additionalProperties: false
+      properties:
+        initialized: { type: boolean }
+        enabled: { type: boolean }
+        startingCash: { type: ["number", "null"] }
+        cash: { type: ["number", "null"] }
+        equity: { type: ["number", "null"] }
+        riskPerTradePercent: { type: number }
+        dailyLossLimitPercent: { type: number }
+        maxOpenPositions: { type: integer }
+        futuresEnabled: { type: boolean }
+        futuresContract:
+          type: string
+          enum: [TX, MTX, TMF]
+        futuresEntryMode:
+          type: string
+          enum: [aggressive, convergent]
+        futuresForceEntryEnabled: { type: boolean }
+        dailyStopTriggered: { type: boolean }
+        dailyStartEquity: { type: ["number", "null"] }
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaperAutomationPosition"
+        pendingEntries:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaperAutomationPendingEntry"
+        events:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/PaperAutomationEvent"
+        currentFuturesEvaluation:
+          oneOf:
+            - $ref: "#/components/schemas/PaperFuturesEvaluation"
+            - type: "null"
+        futuresDecisionLogs:
+          type: array
+          maxItems: 25
+          items:
+            $ref: "#/components/schemas/PaperFuturesEvaluation"
+        futuresPerformance:
+          $ref: "#/components/schemas/PaperFuturesPerformance"
+        lastProcessedAt: { type: ["string", "null"], format: date-time }
+        disclaimer: { type: string }
+      required: [initialized, enabled, startingCash, cash, equity, riskPerTradePercent, dailyLossLimitPercent, maxOpenPositions, futuresEnabled, futuresContract, futuresEntryMode, futuresForceEntryEnabled, dailyStopTriggered, dailyStartEquity, positions, pendingEntries, events, currentFuturesEvaluation, futuresDecisionLogs, futuresPerformance, lastProcessedAt, disclaimer]
+
   securitySchemes:
     clerkSession:
       type: http

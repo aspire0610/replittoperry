@@ -116,6 +116,7 @@ import AiPicksPage from "@/pages/ai-picks";
 import { ResearchOfficePage, type ResearchJob as ResearchOfficeJob } from "@/pages/research-office";
 import SystemSettingsPage from "@/pages/system-settings";
 import EtfSavingsPage from "@/pages/etf-savings";
+import PaperAutotraderPage from "@/pages/paper-autotrader";
 import NotFound from "@/pages/not-found";
 
 type Range = "1mo" | "3mo" | "6mo" | "1y";
@@ -5042,7 +5043,7 @@ function MarketHistoryChart({ bars, dark, compact }: { bars: Bar[]; dark: boolea
   );
 }
 
-function PageNavigation({ active }: { active: "dashboard" | "aiPicks" | "watchlist" | "portfolio" | "etfSavings" | "quantLab" | "research" | "systemSettings" }) {
+function PageNavigation({ active }: { active: "dashboard" | "aiPicks" | "watchlist" | "portfolio" | "etfSavings" | "quantLab" | "paperAutotrader" | "research" | "systemSettings }) {
   const { entries, profile, isSignedIn, isLoading, accountError } = useAccountWatchlist();
   const { signOut } = useClerk();
   const railNavRef = useRef<HTMLElement | null>(null);
@@ -5099,6 +5100,10 @@ function PageNavigation({ active }: { active: "dashboard" | "aiPicks" | "watchli
           </Link>
           <Link href="/quant-lab" className={`rail-link ${active === "quantLab" ? "active" : ""}`} aria-current={active === "quantLab" ? "page" : undefined} data-testid="link-nav-quant-lab">
             <FlaskConical size={17} /><span>量化研究室</span><small>05</small>
+          </Link>
+
+          <Link href="/paper-autotrader" className={`rail-link ${active === "paperAutotrader" ? "active" : ""}`} aria-current={active === "paperAutotrader" ? "page" : undefined} data-testid="link-nav-paper-autotrader">
+            <Activity size={17} /><span>紙上自動模擬</span><small>06</small>
           </Link>
           <Link href="/research-office" className={`rail-link ${active === "research" ? "active" : ""}`} aria-current={active === "research" ? "page" : undefined} data-testid="link-nav-research-office">
             <MessageCircle size={17} /><span>CEO 研究部</span><small>06</small>
@@ -5584,6 +5589,15 @@ function QuantLabRoute() {
   );
 }
 
+function PaperAutotraderRoute() {
+  return (
+    <div className="app-shell terminal-grid">
+      <PageNavigation active="paperAutotrader" />
+      <PaperAutotraderPage />
+    </div>
+  );
+}
+
 function SystemSettingsRoute() {
   return (
     <div className="app-shell terminal-grid">
@@ -5656,6 +5670,7 @@ function Router() {
           <Route path="/portfolio" component={PortfolioPage} />
           <Route path="/etf-savings" component={EtfSavingsRoute} />
           <Route path="/quant-lab" component={QuantLabRoute} />
+          <Route path="/paper-autotrader" component={PaperAutotraderRoute} />
           <Route path="/research-office" component={ResearchOfficeRoute} />
           <Route path="/system-settings" component={SystemSettingsRoute} />
           <Route path="/sign-in/*?" component={SignInPage} />

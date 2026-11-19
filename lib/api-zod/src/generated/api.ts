@@ -3563,4 +3563,462 @@ export const DeleteAdminUserParams = zod.object({
 
 export const DeleteAdminUserResponse = zod.void()
 
+/**
+ * Returns observed session minute bars and locally calculated KD, plus the 15 most recent complete official TAIFEX TX day-session OHLC bars and their daily ATR14/4.
+ * @summary Get observed Taiwan index futures day-session minute bars
+ */
+export const getFuturesDayIntradayResponseDateRegExp = new RegExp('^\\d{8}$');
+export const getFuturesDayIntradayResponseBarsItemOpenExclusiveMin = 0;
 
+export const getFuturesDayIntradayResponseBarsItemHighExclusiveMin = 0;
+
+export const getFuturesDayIntradayResponseBarsItemLowExclusiveMin = 0;
+
+export const getFuturesDayIntradayResponseBarsItemCloseExclusiveMin = 0;
+
+export const getFuturesDayIntradayResponseKMin = 0;
+export const getFuturesDayIntradayResponseKMax = 100;
+
+export const getFuturesDayIntradayResponseDMin = 0;
+export const getFuturesDayIntradayResponseDMax = 100;
+
+export const getFuturesDayIntradayResponsePriceExclusiveMin = 0;
+
+export const getFuturesDayIntradayResponseDailyHistoryBarsItemDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getFuturesDayIntradayResponseDailyHistoryBarsItemContractMonthRegExp = new RegExp('^\\d{6}$');
+export const getFuturesDayIntradayResponseDailyHistoryBarsItemOpenExclusiveMin = 0;
+
+export const getFuturesDayIntradayResponseDailyHistoryBarsItemHighExclusiveMin = 0;
+
+export const getFuturesDayIntradayResponseDailyHistoryBarsItemLowExclusiveMin = 0;
+
+export const getFuturesDayIntradayResponseDailyHistoryBarsItemCloseExclusiveMin = 0;
+
+export const getFuturesDayIntradayResponseDailyHistoryAtr14ExclusiveMin = 0;
+
+export const getFuturesDayIntradayResponseDailyHistoryAtr14By4ExclusiveMin = 0;
+
+
+
+export const GetFuturesDayIntradayResponse = zod.object({
+  "status": zod.enum(['live', 'warming_up', 'closed', 'unavailable']),
+  "symbol": zod.string().nullable(),
+  "date": zod.string().regex(getFuturesDayIntradayResponseDateRegExp),
+  "bars": zod.array(zod.object({
+  "time": zod.coerce.date(),
+  "open": zod.number().gt(getFuturesDayIntradayResponseBarsItemOpenExclusiveMin),
+  "high": zod.number().gt(getFuturesDayIntradayResponseBarsItemHighExclusiveMin),
+  "low": zod.number().gt(getFuturesDayIntradayResponseBarsItemLowExclusiveMin),
+  "close": zod.number().gt(getFuturesDayIntradayResponseBarsItemCloseExclusiveMin)
+})),
+  "k": zod.number().min(getFuturesDayIntradayResponseKMin).max(getFuturesDayIntradayResponseKMax).nullable(),
+  "d": zod.number().min(getFuturesDayIntradayResponseDMin).max(getFuturesDayIntradayResponseDMax).nullable(),
+  "signal": zod.enum(['bullish_cross', 'bearish_cross', 'no_cross', 'insufficient']),
+  "price": zod.number().gt(getFuturesDayIntradayResponsePriceExclusiveMin).nullable(),
+  "change": zod.number().nullable(),
+  "changePercent": zod.number().nullable(),
+  "asOf": zod.coerce.date().nullable(),
+  "source": zod.string(),
+  "dailyHistory": zod.object({
+  "status": zod.enum(['available', 'insufficient', 'unavailable']),
+  "bars": zod.array(zod.object({
+  "date": zod.string().regex(getFuturesDayIntradayResponseDailyHistoryBarsItemDateRegExp),
+  "contractMonth": zod.string().regex(getFuturesDayIntradayResponseDailyHistoryBarsItemContractMonthRegExp),
+  "open": zod.number().gt(getFuturesDayIntradayResponseDailyHistoryBarsItemOpenExclusiveMin),
+  "high": zod.number().gt(getFuturesDayIntradayResponseDailyHistoryBarsItemHighExclusiveMin),
+  "low": zod.number().gt(getFuturesDayIntradayResponseDailyHistoryBarsItemLowExclusiveMin),
+  "close": zod.number().gt(getFuturesDayIntradayResponseDailyHistoryBarsItemCloseExclusiveMin)
+})),
+  "atr14": zod.number().gt(getFuturesDayIntradayResponseDailyHistoryAtr14ExclusiveMin).nullable(),
+  "atr14By4": zod.number().gt(getFuturesDayIntradayResponseDailyHistoryAtr14By4ExclusiveMin).nullable(),
+  "asOf": zod.string().nullable(),
+  "source": zod.string()
+})
+})
+
+/**
+ * @summary Get the signed-in user's autonomous paper-trading state
+ */
+export const getAccountPaperTradingAutomationResponseEventsMax = 100;
+
+export const getAccountPaperTradingAutomationResponseFuturesDecisionLogsMax = 25;
+
+
+
+export const GetAccountPaperTradingAutomationResponse = zod.object({
+  "initialized": zod.boolean(),
+  "enabled": zod.boolean(),
+  "startingCash": zod.number().nullable(),
+  "cash": zod.number().nullable(),
+  "equity": zod.number().nullable(),
+  "riskPerTradePercent": zod.number(),
+  "dailyLossLimitPercent": zod.number(),
+  "maxOpenPositions": zod.number().int(),
+  "futuresEnabled": zod.boolean(),
+  "futuresContract": zod.enum(['TX', 'MTX', 'TMF']),
+  "futuresEntryMode": zod.enum(['aggressive', 'convergent']),
+  "futuresForceEntryEnabled": zod.boolean(),
+  "dailyStopTriggered": zod.boolean(),
+  "dailyStartEquity": zod.number().nullable(),
+  "positions": zod.array(zod.object({
+  "id": zod.string(),
+  "agentId": zod.string(),
+  "ticker": zod.string(),
+  "name": zod.string(),
+  "shares": zod.number().int(),
+  "assetClass": zod.enum(['equity', 'futures']).optional(),
+  "contractType": zod.enum(['TX', 'MTX', 'TMF']).optional(),
+  "direction": zod.enum(['long', 'short']).optional(),
+  "contractMultiplier": zod.number().optional(),
+  "entryPrice": zod.number(),
+  "stopLossPrice": zod.number(),
+  "takeProfitPrice": zod.number(),
+  "entryAt": zod.coerce.date(),
+  "signalAsOf": zod.coerce.date(),
+  "quoteSource": zod.string(),
+  "lastPrice": zod.number(),
+  "lastQuoteAt": zod.coerce.date()
+})),
+  "pendingEntries": zod.array(zod.object({
+  "id": zod.string(),
+  "agentId": zod.string(),
+  "ticker": zod.string(),
+  "name": zod.string(),
+  "assetClass": zod.enum(['equity', 'futures']).optional(),
+  "contractType": zod.enum(['TX', 'MTX', 'TMF']).optional(),
+  "direction": zod.enum(['long', 'short']).optional(),
+  "contractMultiplier": zod.number().optional(),
+  "forcedEntry": zod.boolean().optional(),
+  "entryPrice": zod.number(),
+  "stopLossPrice": zod.number(),
+  "takeProfitPrice": zod.number(),
+  "signalAsOf": zod.coerce.date(),
+  "marketDate": zod.coerce.date(),
+  "expiresAt": zod.coerce.date()
+})),
+  "events": zod.array(zod.object({
+  "id": zod.string(),
+  "agentId": zod.string().nullable(),
+  "ticker": zod.string().nullable(),
+  "assetClass": zod.enum(['equity', 'futures']).optional(),
+  "contractType": zod.enum(['TX', 'MTX', 'TMF']).optional(),
+  "direction": zod.enum(['long', 'short']).optional(),
+  "contracts": zod.number().int().nullish(),
+  "exitReason": zod.enum(['take_profit', 'stop_loss', 'session_end']).optional(),
+  "entryPrice": zod.number().optional(),
+  "stopLossPrice": zod.number().optional(),
+  "realizedPnl": zod.number().optional(),
+  "kind": zod.enum(['signal_queued', 'entry_filled', 'exit_filled', 'skipped', 'halted']),
+  "side": zod.union([zod.literal('buy'),zod.literal('sell'),zod.literal(null)]).nullable(),
+  "shares": zod.number().int().nullable(),
+  "price": zod.number().nullable(),
+  "asOf": zod.coerce.date(),
+  "reason": zod.string()
+})).max(getAccountPaperTradingAutomationResponseEventsMax),
+  "currentFuturesEvaluation": zod.union([zod.object({
+  "id": zod.string(),
+  "asOf": zod.coerce.date(),
+  "status": zod.enum(['ready', 'waiting', 'blocked', 'unavailable', 'inactive']),
+  "action": zod.union([zod.literal('long'),zod.literal('short'),zod.literal('wait'),zod.literal('insufficient'),zod.literal(null)]).nullable(),
+  "direction": zod.union([zod.literal('long'),zod.literal('short'),zod.literal(null)]).nullable(),
+  "price": zod.number().nullable(),
+  "entryPrice": zod.number().nullable(),
+  "stopLossPrice": zod.number().nullable(),
+  "targetPrice": zod.number().nullable(),
+  "reason": zod.string()
+}),zod.null()]),
+  "futuresDecisionLogs": zod.array(zod.object({
+  "id": zod.string(),
+  "asOf": zod.coerce.date(),
+  "status": zod.enum(['ready', 'waiting', 'blocked', 'unavailable', 'inactive']),
+  "action": zod.union([zod.literal('long'),zod.literal('short'),zod.literal('wait'),zod.literal('insufficient'),zod.literal(null)]).nullable(),
+  "direction": zod.union([zod.literal('long'),zod.literal('short'),zod.literal(null)]).nullable(),
+  "price": zod.number().nullable(),
+  "entryPrice": zod.number().nullable(),
+  "stopLossPrice": zod.number().nullable(),
+  "targetPrice": zod.number().nullable(),
+  "reason": zod.string()
+})).max(getAccountPaperTradingAutomationResponseFuturesDecisionLogsMax),
+  "futuresPerformance": zod.object({
+  "closedTrades": zod.number().int(),
+  "wins": zod.number().int(),
+  "losses": zod.number().int(),
+  "breakeven": zod.number().int(),
+  "realizedPnl": zod.number(),
+  "winRatePercent": zod.number().nullable(),
+  "consecutiveStopLosses": zod.number().int(),
+  "adjustmentStatus": zod.enum(['idle', 'pending', 'applied']),
+  "adjustmentAt": zod.coerce.date().nullable(),
+  "adjustmentMessage": zod.string()
+}),
+  "lastProcessedAt": zod.coerce.date().nullable(),
+  "disclaimer": zod.string()
+})
+
+/**
+ * Updates a paper-only simulation account. It never connects to a broker or sends real orders.
+ * @summary Create or update autonomous paper-trading risk settings
+ */
+export const putAccountPaperTradingAutomationBodyStartingCashMin = 100000;
+export const putAccountPaperTradingAutomationBodyStartingCashMax = 100000000;
+
+export const putAccountPaperTradingAutomationBodyRiskPerTradePercentMin = 0.1;
+export const putAccountPaperTradingAutomationBodyRiskPerTradePercentMax = 1;
+
+export const putAccountPaperTradingAutomationBodyDailyLossLimitPercentMin = 0.5;
+export const putAccountPaperTradingAutomationBodyDailyLossLimitPercentMax = 5;
+
+export const putAccountPaperTradingAutomationBodyMaxOpenPositionsMax = 5;
+
+
+
+export const PutAccountPaperTradingAutomationBody = zod.object({
+  "startingCash": zod.number().min(putAccountPaperTradingAutomationBodyStartingCashMin).max(putAccountPaperTradingAutomationBodyStartingCashMax),
+  "riskPerTradePercent": zod.number().min(putAccountPaperTradingAutomationBodyRiskPerTradePercentMin).max(putAccountPaperTradingAutomationBodyRiskPerTradePercentMax),
+  "dailyLossLimitPercent": zod.number().min(putAccountPaperTradingAutomationBodyDailyLossLimitPercentMin).max(putAccountPaperTradingAutomationBodyDailyLossLimitPercentMax),
+  "maxOpenPositions": zod.number().int().min(1).max(putAccountPaperTradingAutomationBodyMaxOpenPositionsMax),
+  "futuresEnabled": zod.boolean(),
+  "futuresContract": zod.enum(['TX', 'MTX', 'TMF']),
+  "futuresEntryMode": zod.enum(['aggressive', 'convergent']),
+  "futuresForceEntryEnabled": zod.boolean().optional()
+})
+
+export const putAccountPaperTradingAutomationResponseEventsMax = 100;
+
+export const putAccountPaperTradingAutomationResponseFuturesDecisionLogsMax = 25;
+
+
+
+export const PutAccountPaperTradingAutomationResponse = zod.object({
+  "initialized": zod.boolean(),
+  "enabled": zod.boolean(),
+  "startingCash": zod.number().nullable(),
+  "cash": zod.number().nullable(),
+  "equity": zod.number().nullable(),
+  "riskPerTradePercent": zod.number(),
+  "dailyLossLimitPercent": zod.number(),
+  "maxOpenPositions": zod.number().int(),
+  "futuresEnabled": zod.boolean(),
+  "futuresContract": zod.enum(['TX', 'MTX', 'TMF']),
+  "futuresEntryMode": zod.enum(['aggressive', 'convergent']),
+  "futuresForceEntryEnabled": zod.boolean(),
+  "dailyStopTriggered": zod.boolean(),
+  "dailyStartEquity": zod.number().nullable(),
+  "positions": zod.array(zod.object({
+  "id": zod.string(),
+  "agentId": zod.string(),
+  "ticker": zod.string(),
+  "name": zod.string(),
+  "shares": zod.number().int(),
+  "assetClass": zod.enum(['equity', 'futures']).optional(),
+  "contractType": zod.enum(['TX', 'MTX', 'TMF']).optional(),
+  "direction": zod.enum(['long', 'short']).optional(),
+  "contractMultiplier": zod.number().optional(),
+  "entryPrice": zod.number(),
+  "stopLossPrice": zod.number(),
+  "takeProfitPrice": zod.number(),
+  "entryAt": zod.coerce.date(),
+  "signalAsOf": zod.coerce.date(),
+  "quoteSource": zod.string(),
+  "lastPrice": zod.number(),
+  "lastQuoteAt": zod.coerce.date()
+})),
+  "pendingEntries": zod.array(zod.object({
+  "id": zod.string(),
+  "agentId": zod.string(),
+  "ticker": zod.string(),
+  "name": zod.string(),
+  "assetClass": zod.enum(['equity', 'futures']).optional(),
+  "contractType": zod.enum(['TX', 'MTX', 'TMF']).optional(),
+  "direction": zod.enum(['long', 'short']).optional(),
+  "contractMultiplier": zod.number().optional(),
+  "forcedEntry": zod.boolean().optional(),
+  "entryPrice": zod.number(),
+  "stopLossPrice": zod.number(),
+  "takeProfitPrice": zod.number(),
+  "signalAsOf": zod.coerce.date(),
+  "marketDate": zod.coerce.date(),
+  "expiresAt": zod.coerce.date()
+})),
+  "events": zod.array(zod.object({
+  "id": zod.string(),
+  "agentId": zod.string().nullable(),
+  "ticker": zod.string().nullable(),
+  "assetClass": zod.enum(['equity', 'futures']).optional(),
+  "contractType": zod.enum(['TX', 'MTX', 'TMF']).optional(),
+  "direction": zod.enum(['long', 'short']).optional(),
+  "contracts": zod.number().int().nullish(),
+  "exitReason": zod.enum(['take_profit', 'stop_loss', 'session_end']).optional(),
+  "entryPrice": zod.number().optional(),
+  "stopLossPrice": zod.number().optional(),
+  "realizedPnl": zod.number().optional(),
+  "kind": zod.enum(['signal_queued', 'entry_filled', 'exit_filled', 'skipped', 'halted']),
+  "side": zod.union([zod.literal('buy'),zod.literal('sell'),zod.literal(null)]).nullable(),
+  "shares": zod.number().int().nullable(),
+  "price": zod.number().nullable(),
+  "asOf": zod.coerce.date(),
+  "reason": zod.string()
+})).max(putAccountPaperTradingAutomationResponseEventsMax),
+  "currentFuturesEvaluation": zod.union([zod.object({
+  "id": zod.string(),
+  "asOf": zod.coerce.date(),
+  "status": zod.enum(['ready', 'waiting', 'blocked', 'unavailable', 'inactive']),
+  "action": zod.union([zod.literal('long'),zod.literal('short'),zod.literal('wait'),zod.literal('insufficient'),zod.literal(null)]).nullable(),
+  "direction": zod.union([zod.literal('long'),zod.literal('short'),zod.literal(null)]).nullable(),
+  "price": zod.number().nullable(),
+  "entryPrice": zod.number().nullable(),
+  "stopLossPrice": zod.number().nullable(),
+  "targetPrice": zod.number().nullable(),
+  "reason": zod.string()
+}),zod.null()]),
+  "futuresDecisionLogs": zod.array(zod.object({
+  "id": zod.string(),
+  "asOf": zod.coerce.date(),
+  "status": zod.enum(['ready', 'waiting', 'blocked', 'unavailable', 'inactive']),
+  "action": zod.union([zod.literal('long'),zod.literal('short'),zod.literal('wait'),zod.literal('insufficient'),zod.literal(null)]).nullable(),
+  "direction": zod.union([zod.literal('long'),zod.literal('short'),zod.literal(null)]).nullable(),
+  "price": zod.number().nullable(),
+  "entryPrice": zod.number().nullable(),
+  "stopLossPrice": zod.number().nullable(),
+  "targetPrice": zod.number().nullable(),
+  "reason": zod.string()
+})).max(putAccountPaperTradingAutomationResponseFuturesDecisionLogsMax),
+  "futuresPerformance": zod.object({
+  "closedTrades": zod.number().int(),
+  "wins": zod.number().int(),
+  "losses": zod.number().int(),
+  "breakeven": zod.number().int(),
+  "realizedPnl": zod.number(),
+  "winRatePercent": zod.number().nullable(),
+  "consecutiveStopLosses": zod.number().int(),
+  "adjustmentStatus": zod.enum(['idle', 'pending', 'applied']),
+  "adjustmentAt": zod.coerce.date().nullable(),
+  "adjustmentMessage": zod.string()
+}),
+  "lastProcessedAt": zod.coerce.date().nullable(),
+  "disclaimer": zod.string()
+})
+
+/**
+ * Simulated orders only. Enabling requires either an active stock research agent or Taiwan futures automation.
+ * @summary Enable or pause autonomous paper trading
+ */
+export const PatchAccountPaperTradingAutomationStatusBody = zod.object({
+  "enabled": zod.boolean()
+})
+
+export const patchAccountPaperTradingAutomationStatusResponseEventsMax = 100;
+
+export const patchAccountPaperTradingAutomationStatusResponseFuturesDecisionLogsMax = 25;
+
+
+
+export const PatchAccountPaperTradingAutomationStatusResponse = zod.object({
+  "initialized": zod.boolean(),
+  "enabled": zod.boolean(),
+  "startingCash": zod.number().nullable(),
+  "cash": zod.number().nullable(),
+  "equity": zod.number().nullable(),
+  "riskPerTradePercent": zod.number(),
+  "dailyLossLimitPercent": zod.number(),
+  "maxOpenPositions": zod.number().int(),
+  "futuresEnabled": zod.boolean(),
+  "futuresContract": zod.enum(['TX', 'MTX', 'TMF']),
+  "futuresEntryMode": zod.enum(['aggressive', 'convergent']),
+  "futuresForceEntryEnabled": zod.boolean(),
+  "dailyStopTriggered": zod.boolean(),
+  "dailyStartEquity": zod.number().nullable(),
+  "positions": zod.array(zod.object({
+  "id": zod.string(),
+  "agentId": zod.string(),
+  "ticker": zod.string(),
+  "name": zod.string(),
+  "shares": zod.number().int(),
+  "assetClass": zod.enum(['equity', 'futures']).optional(),
+  "contractType": zod.enum(['TX', 'MTX', 'TMF']).optional(),
+  "direction": zod.enum(['long', 'short']).optional(),
+  "contractMultiplier": zod.number().optional(),
+  "entryPrice": zod.number(),
+  "stopLossPrice": zod.number(),
+  "takeProfitPrice": zod.number(),
+  "entryAt": zod.coerce.date(),
+  "signalAsOf": zod.coerce.date(),
+  "quoteSource": zod.string(),
+  "lastPrice": zod.number(),
+  "lastQuoteAt": zod.coerce.date()
+})),
+  "pendingEntries": zod.array(zod.object({
+  "id": zod.string(),
+  "agentId": zod.string(),
+  "ticker": zod.string(),
+  "name": zod.string(),
+  "assetClass": zod.enum(['equity', 'futures']).optional(),
+  "contractType": zod.enum(['TX', 'MTX', 'TMF']).optional(),
+  "direction": zod.enum(['long', 'short']).optional(),
+  "contractMultiplier": zod.number().optional(),
+  "forcedEntry": zod.boolean().optional(),
+  "entryPrice": zod.number(),
+  "stopLossPrice": zod.number(),
+  "takeProfitPrice": zod.number(),
+  "signalAsOf": zod.coerce.date(),
+  "marketDate": zod.coerce.date(),
+  "expiresAt": zod.coerce.date()
+})),
+  "events": zod.array(zod.object({
+  "id": zod.string(),
+  "agentId": zod.string().nullable(),
+  "ticker": zod.string().nullable(),
+  "assetClass": zod.enum(['equity', 'futures']).optional(),
+  "contractType": zod.enum(['TX', 'MTX', 'TMF']).optional(),
+  "direction": zod.enum(['long', 'short']).optional(),
+  "contracts": zod.number().int().nullish(),
+  "exitReason": zod.enum(['take_profit', 'stop_loss', 'session_end']).optional(),
+  "entryPrice": zod.number().optional(),
+  "stopLossPrice": zod.number().optional(),
+  "realizedPnl": zod.number().optional(),
+  "kind": zod.enum(['signal_queued', 'entry_filled', 'exit_filled', 'skipped', 'halted']),
+  "side": zod.union([zod.literal('buy'),zod.literal('sell'),zod.literal(null)]).nullable(),
+  "shares": zod.number().int().nullable(),
+  "price": zod.number().nullable(),
+  "asOf": zod.coerce.date(),
+  "reason": zod.string()
+})).max(patchAccountPaperTradingAutomationStatusResponseEventsMax),
+  "currentFuturesEvaluation": zod.union([zod.object({
+  "id": zod.string(),
+  "asOf": zod.coerce.date(),
+  "status": zod.enum(['ready', 'waiting', 'blocked', 'unavailable', 'inactive']),
+  "action": zod.union([zod.literal('long'),zod.literal('short'),zod.literal('wait'),zod.literal('insufficient'),zod.literal(null)]).nullable(),
+  "direction": zod.union([zod.literal('long'),zod.literal('short'),zod.literal(null)]).nullable(),
+  "price": zod.number().nullable(),
+  "entryPrice": zod.number().nullable(),
+  "stopLossPrice": zod.number().nullable(),
+  "targetPrice": zod.number().nullable(),
+  "reason": zod.string()
+}),zod.null()]),
+  "futuresDecisionLogs": zod.array(zod.object({
+  "id": zod.string(),
+  "asOf": zod.coerce.date(),
+  "status": zod.enum(['ready', 'waiting', 'blocked', 'unavailable', 'inactive']),
+  "action": zod.union([zod.literal('long'),zod.literal('short'),zod.literal('wait'),zod.literal('insufficient'),zod.literal(null)]).nullable(),
+  "direction": zod.union([zod.literal('long'),zod.literal('short'),zod.literal(null)]).nullable(),
+  "price": zod.number().nullable(),
+  "entryPrice": zod.number().nullable(),
+  "stopLossPrice": zod.number().nullable(),
+  "targetPrice": zod.number().nullable(),
+  "reason": zod.string()
+})).max(patchAccountPaperTradingAutomationStatusResponseFuturesDecisionLogsMax),
+  "futuresPerformance": zod.object({
+  "closedTrades": zod.number().int(),
+  "wins": zod.number().int(),
+  "losses": zod.number().int(),
+  "breakeven": zod.number().int(),
+  "realizedPnl": zod.number(),
+  "winRatePercent": zod.number().nullable(),
+  "consecutiveStopLosses": zod.number().int(),
+  "adjustmentStatus": zod.enum(['idle', 'pending', 'applied']),
+  "adjustmentAt": zod.coerce.date().nullable(),
+  "adjustmentMessage": zod.string()
+}),
+  "lastProcessedAt": zod.coerce.date().nullable(),
+  "disclaimer": zod.string()
+})
