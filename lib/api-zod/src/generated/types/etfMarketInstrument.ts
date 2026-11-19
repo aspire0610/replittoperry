@@ -22,6 +22,14 @@ export interface EtfMarketInstrument {
      * @minimum 0
      * @nullable
      */
+  latestPrice: number | null;
+  latestPriceSource: string;
+  /** @nullable */
+  latestPriceAsOf: string | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
   marketPrice: number | null;
   /**
      * @minimum 0
@@ -35,8 +43,11 @@ export interface EtfMarketInstrument {
   /** @nullable */
   navUpdatedAt: Date | null;
   distributions: EtfDistribution[];
-  /** @minimum 0 */
-  trailing12MonthDividend: number;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  trailing12MonthDividend: number | null;
   /**
      * @minimum 0
      * @nullable

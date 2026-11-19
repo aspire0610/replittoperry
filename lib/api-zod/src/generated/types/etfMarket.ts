@@ -5,12 +5,14 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { EtfMarketDistributionDataStatus } from './etfMarketDistributionDataStatus';
 import type { EtfMarketInstrument } from './etfMarketInstrument';
 import type { EtfMarketNavDataStatus } from './etfMarketNavDataStatus';
 
 export interface EtfMarket {
   asOf: string;
   source: string;
+  distributionDataStatus: EtfMarketDistributionDataStatus;
   navDataStatus: EtfMarketNavDataStatus;
   /** @nullable */
   navDataUpdatedAt: Date | null;

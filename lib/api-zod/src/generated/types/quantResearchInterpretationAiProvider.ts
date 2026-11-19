@@ -17,5 +17,6 @@ export const QuantResearchInterpretationAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   openai: 'openai',
+  replit: 'replit',
   nvidia_nim: 'nvidia_nim',
 } as const;

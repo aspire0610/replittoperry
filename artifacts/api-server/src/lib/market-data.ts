@@ -1,3 +1,4 @@
+import { recoverUsMarketQuote } from "./us-market-fallback.js";
 import {
   fetchFugleFuturesQuote,
   fetchFugleStockQuote,
@@ -12,6 +13,11 @@ import {
   fetchTaifexDailyFuturesQuote,
   fetchTaifexFuturesQuotes,
 } from "./taifex-market-data.js";
+import {
+  fetchYuantaSparkQuotes,
+  fetchYuantaSparkKLine,
+  isYuantaSparkRelayConfigured,
+} from "./yuanta-spark-relay.js";
 import { isTaiwanMarketClosed } from "./twse-holiday-calendar.js";
 import { parseTwseMiIndexDailyClose } from "./official-twse-mi-index.js";
 import { fetchOfficialJson } from "./official-json-fetch.js";
@@ -1294,6 +1300,40 @@ export async function getStockQuote(
     maxInSessionAgeMs = STOCK_QUOTE_MAX_AGE_MS,
   }: { maxInSessionAgeMs?: number } = {},
 ): Promise<StockQuoteData> {
+  if (isYuantaSparkRelayConfigured()) {
+    const stockCode = symbol.trim().toUpperCase().replace(/\.(TW|TWO)$/, "");
+    const market = exchange === "otc" ? "otc" : "securities";
+    try {
+      const sparkQuotes = await fetchYuantaSparkQuotes(market, [stockCode]);
+      const quote = sparkQuotes.find((candidate) => candidate.symbol === stockCode);
+      if (!quote) throw new Error("SPARK 沒有回傳該個股報價。");
+      const change =
+        quote.previousClose === null ? null : quote.price - quote.previousClose;
+      return validateStockQuoteFreshness({
+        name: quote.name,
+        price: quote.price,
+        previousClose: quote.previousClose,
+        change,
+        changePercent:
+          quote.previousClose && change !== null
+            ? (change / quote.previousClose) * 100
+            : null,
+        source: "Yuanta SPARK · 成交時間",
+        asOf: quote.asOf,
+        available: true,
+        error: null,
+      }, new Date(), maxInSessionAgeMs);
+    } catch (error) {
+      const reason =
+        error instanceof Error ? error.message : "SPARK 個股報價失敗";
+      logger.warn(
+        { symbol: stockCode, market, reason },
+        "Yuanta SPARK stock quote unavailable; refusing alternate live quote sources",
+      );
+      throw new MarketDataError(`Yuanta SPARK 個股報價不可用：${reason}`, 502);
+    }
+  }
+
   if (!process.env.FUGLE_API_KEY?.trim()) {
     return validateStockQuoteFreshness(
       await fetchTwseStockQuote(symbol, exchange),
@@ -1455,6 +1495,87 @@ export async function getMarketWideStockQuotes(
       }
     }
   }));
+
+  if (isYuantaSparkRelayConfigured()) {
+    const sparkRequests: Array<{
+      market: "securities" | "otc";
+      instruments: typeof channels;
+    }> = [];
+    for (const exchange of ["tse", "otc"] as const) {
+      const marketInstruments = channels.filter((item) => item.exchange === exchange);
+      const market = exchange === "tse" ? "securities" : "otc";
+      for (let index = 0; index < marketInstruments.length; index += 20) {
+        sparkRequests.push({
+          market,
+          instruments: marketInstruments.slice(index, index + 20),
+        });
+      }
+    }
+
+    let nextSparkRequest = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(4, sparkRequests.length) }, async () => {
+        while (nextSparkRequest < sparkRequests.length) {
+          const request = sparkRequests[nextSparkRequest++]!;
+          try {
+            const sparkRows = await fetchYuantaSparkQuotes(
+              request.market,
+              request.instruments.map((item) => item.symbol),
+            );
+            for (const row of sparkRows) {
+              const symbol = row.symbol.trim().toUpperCase();
+              const requested = request.instruments.find(
+                (item) => item.symbol === symbol,
+              );
+              const misQuote = quotes.get(symbol);
+              if (
+                !requested ||
+                !misQuote?.asOf ||
+                !misQuote.volume ||
+                misQuote.previousClose === null ||
+                !row.asOf ||
+                row.previousClose === null
+              ) continue;
+              const nowMs = now.getTime();
+              const sparkAgeMs = nowMs - row.asOf.getTime();
+              if (
+                sparkAgeMs < -60_000 ||
+                sparkAgeMs > 180_000 ||
+                Math.abs(row.asOf.getTime() - misQuote.asOf.getTime()) > 180_000 ||
+                Math.abs(row.previousClose - misQuote.previousClose) > 0.01
+              ) continue;
+
+              const change = row.price - row.previousClose;
+              try {
+                const sparkFirstQuote = validateStockQuoteFreshness({
+                  name: row.name ?? misQuote.name,
+                  price: row.price,
+                  previousClose: row.previousClose,
+                  change,
+                  changePercent: (change / row.previousClose) * 100,
+                  // SPARK supplies the trade price; MIS supplies volume in
+                  // shares after the exchange's documented lot conversion.
+                  volume: misQuote.volume,
+                  openPrice: row.openPrice ?? undefined,
+                  highPrice: row.highPrice ?? undefined,
+                  lowPrice: row.lowPrice ?? undefined,
+                  source: "Yuanta SPARK 成交價 · TWSE MIS 成交量",
+                  asOf: row.asOf,
+                  available: true,
+                  error: null,
+                }, now, 180_000);
+                quotes.set(symbol, sparkFirstQuote);
+              } catch {
+                // Keep the independently validated TWSE MIS quote as fallback.
+              }
+            }
+          } catch {
+            // A relay failure leaves the validated TWSE MIS batch in place.
+          }
+        }
+      }),
+    );
+  }
   return quotes;
 }
 
@@ -1575,6 +1696,55 @@ function validateTaiexQuoteFreshness(
 }
 
 export async function getTaiexQuote(): Promise<MarketQuoteData> {
+  if (isYuantaSparkRelayConfigured()) {
+    try {
+      // SPARK's instrument list identifies 100000 as 市加權. Its documented
+      // StkType2 bit 4 identifies index instruments; require both signals.
+      const sparkQuotes = await fetchYuantaSparkQuotes("securities", ["100000"]);
+      const sparkQuote = sparkQuotes.find((quote) =>
+        quote.symbol === "100000" &&
+        quote.asOf !== null &&
+        quote.name !== null &&
+        /加權/.test(quote.name) &&
+        quote.stockType2 !== null &&
+        (quote.stockType2 & 0b0000_1000) !== 0,
+      );
+      if (
+        !sparkQuote ||
+        !sparkQuote.asOf ||
+        !sparkQuote.name
+      ) {
+        throw new MarketDataError("SPARK 尚未回傳可驗證的加權指數報價", 502);
+      }
+      validateTaiexMoveFromOfficialClose(
+        sparkQuote.price,
+        sparkQuote.previousClose,
+      );
+      return validateTaiexQuoteFreshness({
+        key: "taiex",
+        name: "加權指數",
+        ticker: "^TWII",
+        price: sparkQuote.price,
+        change:
+          sparkQuote.previousClose === null
+            ? null
+            : sparkQuote.price - sparkQuote.previousClose,
+        changePercent:
+          sparkQuote.previousClose === null || sparkQuote.previousClose <= 0
+            ? null
+            : ((sparkQuote.price - sparkQuote.previousClose) /
+                sparkQuote.previousClose) *
+              100,
+        source: `Yuanta SPARK · ${sparkQuote.symbol}`,
+        asOf: sparkQuote.asOf,
+        available: true,
+        error: null,
+      });
+    } catch {
+      // Keep the existing providers until SPARK confirms the index symbol.
+    }
+  }
+
   try {
     const tick = await fetchFugleTaiexIndexTick();
     let previousClose: number | null = null;
@@ -1705,6 +1875,61 @@ async function getFuturesQuotes(): Promise<MarketQuoteData[]> {
   const deadline = Date.now() + FUTURES_QUOTE_BUDGET_MS;
   const failures: string[] = [];
   let quotes: MarketQuoteData[] | null = null;
+  const sparkFutures = new Map<"day" | "night", MarketQuoteData>();
+
+  if (isYuantaSparkRelayConfigured()) {
+    try {
+      const sparkRows = await withTimeout(
+        fetchYuantaSparkQuotes("futures", ["TXF1", "TXF8"]),
+        deadline - Date.now(),
+        "Yuanta SPARK 期貨報價逾時",
+      );
+      for (const row of sparkRows) {
+        const session =
+          row.symbol === "TXF1" ? "day" :
+          row.symbol === "TXF8" ? "night" :
+          null;
+        if (!session || !row.asOf) continue;
+        const ageMs = Date.now() - row.asOf.getTime();
+        if (ageMs < -60_000 || ageMs > 90_000) continue;
+        if (session === "night") {
+          const parts = new Intl.DateTimeFormat("en-US", {
+            timeZone: "Asia/Taipei",
+            hour: "2-digit",
+            minute: "2-digit",
+            hourCycle: "h23",
+          }).formatToParts(row.asOf);
+          const hour = Number(parts.find((part) => part.type === "hour")?.value);
+          const minute = Number(parts.find((part) => part.type === "minute")?.value);
+          const minuteOfDay = hour * 60 + minute;
+          if (!(minuteOfDay >= 15 * 60 || minuteOfDay < 5 * 60)) continue;
+        }
+        const existingNightQuote = sparkFutures.get("night");
+        if (session === "night" && existingNightQuote?.ticker === "TXF8") continue;
+        const change =
+          row.previousClose === null ? null : row.price - row.previousClose;
+        sparkFutures.set(session, {
+          key: session === "day" ? "futures_day" : "futures_night",
+          name: session === "day" ? "臺指期日盤" : "臺指期夜盤",
+          ticker: row.symbol,
+          price: row.price,
+          change,
+          changePercent:
+            row.previousClose && change !== null
+              ? (change / row.previousClose) * 100
+              : null,
+          source: `Yuanta SPARK · ${row.symbol}`,
+          asOf: row.asOf,
+          available: true,
+          error: null,
+        });
+      }
+    } catch (error) {
+      failures.push(
+        error instanceof Error ? `Yuanta SPARK：${error.message}` : "Yuanta SPARK 期貨行情失敗",
+      );
+    }
+  }
 
   try {
     quotes = await withTimeout(
@@ -1781,7 +2006,44 @@ async function getFuturesQuotes(): Promise<MarketQuoteData[]> {
     ];
   }
 
-  return quotes;
+  for (const [session, quote] of sparkFutures) {
+    quotes[session === "day" ? 0 : 1] = quote;
+  }
+
+  return Promise.all(
+    (["day", "night"] as const).map(async (session, index) => {
+      const quote = quotes![index]!;
+      const quoteAgeMs = quote.asOf
+        ? Date.now() - quote.asOf.getTime()
+        : Number.POSITIVE_INFINITY;
+      const hasFreshQuote =
+        quote.available &&
+        quote.price !== null &&
+        quoteAgeMs >= -60_000 &&
+        quoteAgeMs <= 90_000;
+      if (hasFreshQuote) return quote;
+
+      try {
+        const lastClose = await withTimeout(
+          fetchTaifexDailyFuturesQuote(session),
+          FUTURES_QUOTE_BUDGET_MS,
+          "TAIFEX 官方最近收盤價查詢逾時",
+        );
+        if (lastClose?.available) return lastClose;
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "TAIFEX 官方日行情查詢失敗";
+        return {
+          ...quote,
+          error: `${quote.error ?? "目前沒有新鮮期貨報價"}；最近收盤價備援失敗：${message}`,
+        };
+      }
+      return {
+        ...quote,
+        error: `${quote.error ?? "目前沒有新鮮期貨報價"}；TAIFEX 尚無可用的官方最近收盤價。`,
+      };
+    }),
+  );
 }
 
 export async function getMarketQuotes(): Promise<MarketQuoteData[]> {
@@ -1944,7 +2206,7 @@ function parseNasdaqTimestamp(
   return { asOf, dateLabel, hasTime: true };
 }
 
-async function fetchUsMarketIndicator(
+async function fetchNasdaqMarketIndicator(
   config: UsMarketIndicatorConfig,
 ): Promise<MarketQuoteData> {
   const url = new URL(
@@ -2021,6 +2283,20 @@ async function fetchUsMarketIndicator(
     available: true,
     error: null,
   };
+}
+
+async function fetchUsMarketIndicator(
+  config: UsMarketIndicatorConfig,
+): Promise<MarketQuoteData> {
+  const primary = await fetchNasdaqMarketIndicator(config).catch((error: unknown) =>
+    unavailableUsMarketIndicator(
+      config,
+      error instanceof Error ? error.message : "Nasdaq 回傳無法辨識的行情資料",
+    ),
+  );
+  const yahooSymbol = config.ticker === "COMP" ? "^IXIC"
+    : config.ticker === "SOX" ? "^SOX" : config.ticker;
+  return recoverUsMarketQuote(primary, yahooSymbol);
 }
 
 function getUsMarketIndicator(
@@ -2382,41 +2658,92 @@ export async function getTaiexIntradayHistory(): Promise<MarketIntradayHistoryDa
   }
 
   const promise = (async (): Promise<MarketIntradayHistoryData> => {
-    let intraday: Awaited<ReturnType<typeof fetchFugleTaiexIntradayCandles>>;
+    let intraday: {
+      date: string;
+      bars: MarketIntradayBarData[];
+    } | null = null;
     let dailyHistory: Awaited<ReturnType<typeof getTaiexHistory>> | null = null;
     let sessionType: MarketIntradayHistoryData["sessionType"] = "live";
-    try {
-      intraday = await fetchFugleTaiexIntradayCandles();
-    } catch (error) {
-      if (
-        !(error instanceof Error) ||
-        error.message !== "Fugle 尚未提供加權指數一分鐘分時資料"
-      ) {
-        throw new MarketDataError(
-          error instanceof Error
-            ? error.message
-            : "目前無法取得加權指數一分鐘分時資料",
-          502,
-        );
-      }
+    let intradaySource = "Fugle MarketData · TWSE IX0001 即時一分鐘 K 線";
 
-      dailyHistory = await getTaiexHistory("1mo");
-      const latestSessionDate = dailyHistory.bars.at(-1)?.date;
-      if (!latestSessionDate) {
-        throw new MarketDataError("沒有可用的官方加權指數交易日，無法回查歷史分時", 502);
-      }
+    if (isYuantaSparkRelayConfigured()) {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Taipei",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).formatToParts(new Date());
+      const today = [
+        parts.find((part) => part.type === "year")?.value,
+        parts.find((part) => part.type === "month")?.value,
+        parts.find((part) => part.type === "day")?.value,
+      ].join("-");
       try {
-        intraday = await fetchFugleTaiexHistoricalIntradayCandles(latestSessionDate);
-        sessionType = "historical";
-      } catch (historicalError) {
-        throw new MarketDataError(
-          historicalError instanceof Error
-            ? `即時分時尚無資料，且無法取得最近交易日歷史分時：${historicalError.message}`
-            : "即時分時尚無資料，且無法取得最近交易日歷史分時",
-          502,
+        const sparkBars = await fetchYuantaSparkKLine(
+          "securities",
+          "100000",
+          today,
         );
+        if (sparkBars.length > 0) {
+          intraday = { date: today, bars: sparkBars };
+          intradaySource = "Yuanta SPARK · TWSE 100000 即時一分鐘 K 線";
+        } else {
+          dailyHistory = await getTaiexHistory("1mo");
+          const latestSessionDate = dailyHistory.bars.at(-1)?.date;
+          if (latestSessionDate && latestSessionDate !== today) {
+            const historicalSparkBars = await fetchYuantaSparkKLine(
+              "securities",
+              "100000",
+              latestSessionDate,
+            );
+            if (historicalSparkBars.length > 0) {
+              intraday = { date: latestSessionDate, bars: historicalSparkBars };
+              sessionType = "historical";
+              intradaySource = "Yuanta SPARK · TWSE 100000 歷史一分鐘 K 線";
+            }
+          }
+        }
+      } catch (error) {
+        logger.warn({ err: error }, "Unable to retrieve TAIEX intraday bars from Yuanta SPARK");
       }
     }
+
+    if (!intraday) {
+      try {
+        intraday = await fetchFugleTaiexIntradayCandles();
+      } catch (error) {
+        if (
+          !(error instanceof Error) ||
+          error.message !== "Fugle 尚未提供加權指數一分鐘分時資料"
+        ) {
+          throw new MarketDataError(
+            error instanceof Error
+              ? error.message
+              : "目前無法取得加權指數一分鐘分時資料",
+            502,
+          );
+        }
+
+        dailyHistory ??= await getTaiexHistory("1mo");
+        const latestSessionDate = dailyHistory.bars.at(-1)?.date;
+        if (!latestSessionDate) {
+          throw new MarketDataError("沒有可用的官方加權指數交易日，無法回查歷史分時", 502);
+        }
+        try {
+          intraday = await fetchFugleTaiexHistoricalIntradayCandles(latestSessionDate);
+          sessionType = "historical";
+          intradaySource = "Fugle MarketData · TWSE IX0001 官方歷史一分鐘 K 線";
+        } catch (historicalError) {
+          throw new MarketDataError(
+            historicalError instanceof Error
+              ? `即時分時尚無資料，且無法取得最近交易日歷史分時：${historicalError.message}`
+              : "即時分時尚無資料，且無法取得最近交易日歷史分時",
+            502,
+          );
+        }
+      }
+    }
+    if (!intraday) throw new MarketDataError("目前沒有可用的加權指數分時資料", 404);
 
     dailyHistory ??= await getTaiexHistory("1mo");
     const previousClose =
@@ -2446,9 +2773,7 @@ export async function getTaiexIntradayHistory(): Promise<MarketIntradayHistoryDa
       date: intraday.date,
       timeframe: "1m",
       sessionType,
-      source: sessionType === "historical"
-        ? "Fugle MarketData · TWSE IX0001 官方歷史一分鐘 K 線"
-        : "Fugle MarketData · TWSE IX0001 即時一分鐘 K 線",
+      source: intradaySource,
       previousClose,
       asOf: latest.time,
       bars: intraday.bars,

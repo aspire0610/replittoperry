@@ -7,10 +7,6 @@ import {
   GetAccountMeResponse,
   GetAccountPaperTradingResponse,
   GetAccountPaperTradingAutomationResponse,
-  PutAccountPaperTradingAutomationBody,
-  PutAccountPaperTradingAutomationResponse,
-  PatchAccountPaperTradingAutomationStatusBody,
-  PatchAccountPaperTradingAutomationStatusResponse,
   GetAccountQuantResearchRunParams,
   GetAccountQuantResearchRunResponse,
   GetAccountQuantResearchRunsResponse,
@@ -43,6 +39,10 @@ import {
   PostAccountPaperTradingBody,
   PostAccountPaperTradingResponse,
   PostAccountPaperTradingResetResponse,
+  PutAccountPaperTradingAutomationBody,
+  PutAccountPaperTradingAutomationResponse,
+  PatchAccountPaperTradingAutomationStatusBody,
+  PatchAccountPaperTradingAutomationStatusResponse,
   PostAccountLineLinkCodeResponse,
   PostAccountQuantResearchBody,
   PostAccountQuantResearchInterpretBody,
@@ -73,6 +73,10 @@ import {
   type LineAssistantMessage,
 } from "../lib/line-assistant-format.js";
 import { diagnoseLineWebSearch } from "../lib/line-web-search.js";
+import {
+  isReplitAiBridgeConfigured,
+  requestReplitAiCompletion,
+} from "../lib/replit-ai-bridge.js";
 import {
   clearLineAssistantHistory,
   getLineAssistantOwner,
@@ -354,6 +358,7 @@ async function buildLineDailySummaryReply(
             },
           ]
         : []),
+      ...summary.officialEventSources.slice(0, 2),
       ...summary.newsSources.slice(0, 2),
     ].slice(0, 5);
     return {
@@ -554,7 +559,8 @@ function getQuantOperationFailure(
   const knownError =
     error instanceof QuantResearchError ||
     error instanceof QuantMarketDataError ||
-    error instanceof PaperTradingError
+    error instanceof PaperTradingError ||
+    error instanceof PaperAutomationError
       ? error
       : null;
   const originalStatus = knownError?.status ?? 503;
@@ -780,7 +786,8 @@ function requireAdmin(
   next();
 }
 
-router.use(requireAccountAccess);
+router.use("/account", requireAccountAccess);
+router.use("/admin", requireAccountAccess);
 
 router.get("/account/research-jobs", async (req, res): Promise<void> => {
   try {
@@ -922,6 +929,67 @@ router.post(
       "Admin web search diagnostic completed",
     );
     res.json(safeDiagnostic);
+  },
+);
+
+router.post(
+  "/admin/replit-ai-bridge-diagnostic",
+  requireAdmin,
+  async (req: Request, res: Response<unknown, AccountLocals>): Promise<void> => {
+    res.setHeader("Cache-Control", "no-store");
+    if (!isReplitAiBridgeConfigured()) {
+      res.status(503).json({ error: "正式環境尚未設定 Replit 私有橋接。" });
+      return;
+    }
+
+    const schema = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        ok: { type: "boolean" },
+        marker: { type: "string", enum: ["bridge_ok"] },
+      },
+      required: ["ok", "marker"],
+    };
+
+    try {
+      const output = await requestReplitAiCompletion(
+        JSON.stringify({ purpose: "connectivity_check", expected: "bridge_ok" }),
+        "這是一項連線診斷。只回傳符合 schema 的結果：ok 為 true，marker 為 bridge_ok。",
+        "bridge_connectivity_check",
+        schema,
+      );
+      const parsed: unknown = JSON.parse(output);
+      if (
+        !parsed ||
+        typeof parsed !== "object" ||
+        Array.isArray(parsed) ||
+        (parsed as { ok?: unknown }).ok !== true ||
+        (parsed as { marker?: unknown }).marker !== "bridge_ok"
+      ) {
+        throw new Error("The bridge returned an invalid diagnostic result.");
+      }
+
+      req.log.info(
+        { operation: "admin_replit_ai_bridge_diagnostic", outcome: "passed" },
+        "Admin Replit AI bridge diagnostic completed",
+      );
+      res.json({
+        outcome: "passed",
+        provider: "replit_ai_bridge",
+        checkedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      req.log.warn(
+        {
+          operation: "admin_replit_ai_bridge_diagnostic",
+          outcome: "failed",
+          failureType: error instanceof Error ? error.name : "unknown",
+        },
+        "Admin Replit AI bridge diagnostic failed",
+      );
+      res.status(502).json({ error: "Replit 私有 AI 橋接測試失敗。" });
+    }
   },
 );
 

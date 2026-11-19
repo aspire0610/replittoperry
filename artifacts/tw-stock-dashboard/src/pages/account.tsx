@@ -294,6 +294,9 @@ export function AdminUsersPage() {
   const [inviteError, setInviteError] = useState("");
   const [updateNotice, setUpdateNotice] = useState("");
   const [updateError, setUpdateError] = useState("");
+  const [bridgeDiagnosticPending, setBridgeDiagnosticPending] = useState(false);
+  const [bridgeDiagnosticResult, setBridgeDiagnosticResult] = useState<string | null>(null);
+  const [bridgeDiagnosticError, setBridgeDiagnosticError] = useState("");
   const inviteForm = useForm<InvitationFormValues>({
     resolver: zodResolver(invitationSchema),
     defaultValues: { email: "" },
@@ -366,6 +369,34 @@ export function AdminUsersPage() {
       setInviteCopyNotice("邀請連結已複製，請只轉交給指定收件人。");
     } catch {
       setInviteCopyNotice("無法自動複製，請選取上方連結並手動複製。");
+    }
+  };
+  const runBridgeDiagnostic = async () => {
+    if (!window.confirm("這會發出一次 Replit AI 測試請求，可能耗用 AI 點數。要繼續嗎？")) return;
+    setBridgeDiagnosticPending(true);
+    setBridgeDiagnosticResult(null);
+    setBridgeDiagnosticError("");
+    try {
+      const response = await fetch(appRoute("/api/account/admin/replit-ai-bridge-diagnostic"), {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        outcome?: unknown;
+        provider?: unknown;
+        checkedAt?: unknown;
+        error?: unknown;
+      };
+      if (!response.ok || payload.outcome !== "passed" || typeof payload.checkedAt !== "string") {
+        throw new Error(typeof payload.error === "string" ? payload.error : "橋接測試失敗，請稍後再試。");
+      }
+      setBridgeDiagnosticResult(new Date(payload.checkedAt).toLocaleString("zh-TW"));
+    } catch (error) {
+      setBridgeDiagnosticError(errorMessage(error));
+    } finally {
+      setBridgeDiagnosticPending(false);
     }
   };
   const dismissInviteNotice = () => {
@@ -554,6 +585,35 @@ export function AdminUsersPage() {
                 <span>解析結果：<strong>{diagnosticResult.resultCount}</strong></span>
                 {diagnosticResult.failureKind && <span>錯誤類型：<strong>{diagnosticResult.failureKind}</strong></span>}
                 <span>檢查時間：<strong>{new Date(diagnosticResult.checkedAt).toLocaleString("zh-TW")}</strong></span>
+              </div>
+            )}
+          </section>
+          <section className="account-panel account-diagnostic" aria-labelledby="bridge-diagnostic-title" data-testid="section-replit-bridge-diagnostic">
+            <div className="account-diagnostic-head">
+              <div>
+                <h2 id="bridge-diagnostic-title">Replit 私有 AI 橋接檢查</h2>
+                <p>管理員可發出一次固定測試，確認 Vercel 權杖橋接至 Replit 並取得結構化回覆；不會傳送行情或個人資料。</p>
+              </div>
+              <button
+                type="button"
+                className="account-button account-button-quiet"
+                onClick={() => void runBridgeDiagnostic()}
+                disabled={bridgeDiagnosticPending || bridgeDiagnosticResult !== null}
+                data-testid="button-run-replit-bridge-diagnostic"
+              >
+                {bridgeDiagnosticPending ? <LoaderCircle size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                {bridgeDiagnosticPending ? "測試中…" : bridgeDiagnosticResult ? "本次測試已完成" : "執行一次測試"}
+              </button>
+            </div>
+            {bridgeDiagnosticError && (
+              <div className="account-feedback error" role="alert" data-testid="error-replit-bridge-diagnostic">
+                <CircleAlert size={14} />{bridgeDiagnosticError}
+              </div>
+            )}
+            {bridgeDiagnosticResult && (
+              <div className="account-diagnostic-result" role="status" data-testid="status-replit-bridge-diagnostic">
+                <span><strong>私有橋接與結構化 AI 回覆正常</strong></span>
+                <span>檢查時間：<strong>{bridgeDiagnosticResult}</strong></span>
               </div>
             )}
           </section>

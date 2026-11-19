@@ -5468,3 +5468,218 @@ button:focus-visible, input:focus-visible {
   line-height: 1.5;
 }
 .ai-refreshing-status svg { flex: 0 0 auto; color: hsl(var(--primary)); }
+
+/* A desktop-first market wall: keep the dashboard's data and card controls,
+   but use the available width to reduce vertical scanning and scrolling. */
+.card-title-icon { display: none; }
+
+@media (min-width: 1280px) {
+  .app-shell:not(.public-market-shell) .dashboard-main {
+    max-width: 2100px;
+    padding: 14px clamp(16px, 1.6vw, 30px) 26px;
+  }
+
+  .headline-row {
+    padding-bottom: 9px;
+  }
+
+  .dashboard-workspace {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    align-items: start;
+    grid-auto-flow: row dense;
+    gap: 16px;
+  }
+
+  .dashboard-workspace > [data-card-id="stock-search"] {
+    grid-column: span 5;
+  }
+
+  .dashboard-workspace > [data-card-id="market-index"] {
+    grid-column: span 7;
+  }
+
+  .dashboard-workspace > [data-card-id="market-intraday"],
+  .dashboard-workspace > [data-card-id="market-analysis"] {
+    grid-column: span 6;
+  }
+
+  .dashboard-workspace > [data-card-id="stock-analysis"] {
+    grid-column: 1 / -1;
+  }
+
+  .workspace-card-toolbar {
+    min-height: 34px;
+    gap: 8px;
+    padding-bottom: 5px;
+  }
+
+  .card-collapse-trigger {
+    flex: 1;
+    min-width: 0;
+    min-height: 32px;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0 10px;
+  }
+
+  .card-title-icon {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    color: hsl(var(--primary));
+  }
+
+  .card-title-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .card-order-controls {
+    gap: 1px;
+  }
+
+  .card-order-button {
+    width: 23px;
+    height: 23px;
+  }
+
+  .market-grid {
+    display: block;
+  }
+
+  .market-grid > .card-order-workspace-layer {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    grid-auto-flow: row dense;
+    gap: 14px;
+  }
+
+  .market-grid > .card-order-workspace-layer > [data-card-id="market-history"] {
+    grid-column: 1 / -1;
+  }
+
+  .stock-card-workspace {
+    display: block;
+  }
+
+  .stock-card-workspace > .card-order-workspace-layer {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    grid-auto-flow: row dense;
+    gap: 14px;
+  }
+
+  .stock-card-workspace > .card-order-workspace-layer > [data-card-id="stock-metrics"] {
+    grid-column: 1 / -1;
+  }
+
+  .stock-card-workspace > .card-order-workspace-layer > [data-card-id="research-data"],
+  .stock-card-workspace > .card-order-workspace-layer > [data-card-id="ai-assessment"],
+  .stock-card-workspace > .card-order-workspace-layer > [data-card-id="price-chart"],
+  .stock-card-workspace > .card-order-workspace-layer > [data-card-id="volume-chart"] {
+    grid-column: span 1;
+  }
+
+  .stock-card-workspace > .card-order-workspace-layer > [data-card-id="technical-ledger"] {
+    grid-column: 1 / -1;
+  }
+
+  .market-grid .market-chart {
+    height: 230px;
+  }
+
+  .stock-card-workspace .chart-wrap {
+    height: 230px;
+  }
+
+  .stock-card-workspace .chart-wrap-short {
+    height: 190px;
+  }
+
+  .dashboard-workspace > [data-card-id="market-intraday"] .chart-skeleton {
+    height: 230px;
+    margin: 10px;
+  }
+
+  .dashboard-workspace > [data-card-id="market-intraday"] [data-testid="chart-market-intraday"] > div:nth-of-type(2) {
+    height: 230px !important;
+  }
+
+  .dashboard-workspace .workspace-card-content {
+    min-width: 0;
+  }
+
+  .dashboard-workspace .source-line,
+  .market-grid .source-line {
+    font-size: 9px;
+  }
+}
+
+/* Keep the desktop market dashboard balanced and avoid narrow nested cards. */
+@media (min-width: 1280px) {
+  .dashboard-workspace > [data-card-id="market-intraday"] {
+    grid-column: span 4;
+  }
+
+  .dashboard-workspace > [data-card-id="market-analysis"] {
+    grid-column: span 8;
+  }
+
+  .market-grid > .card-order-workspace-layer {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .market-grid > .card-order-workspace-layer > [data-card-id="market-history"] {
+    grid-column: auto;
+  }
+
+  .market-grid .market-chart {
+    height: 180px;
+  }
+
+  .dashboard-workspace > [data-card-id="market-intraday"] .chart-skeleton {
+    height: 185px;
+  }
+
+  .dashboard-workspace > [data-card-id="market-intraday"] [data-testid="chart-market-intraday"] > div:nth-of-type(2) {
+    height: 185px !important;
+  }
+}
+
+@media (min-width: 1280px) and (max-height: 760px) {
+  .dashboard-main {
+    padding-top: 9px;
+    padding-bottom: 16px;
+  }
+
+  .headline-row {
+    padding-bottom: 5px;
+  }
+
+  .dashboard-workspace {
+    gap: 10px 12px;
+  }
+
+  .workspace-card-toolbar {
+    min-height: 29px;
+    padding-bottom: 2px;
+  }
+
+  .market-grid .market-chart {
+    height: 150px;
+  }
+
+  .dashboard-workspace > [data-card-id="market-intraday"] .chart-skeleton {
+    height: 155px;
+  }
+
+  .dashboard-workspace > [data-card-id="market-intraday"] [data-testid="chart-market-intraday"] > div:nth-of-type(2) {
+    height: 155px !important;
+  }
+}

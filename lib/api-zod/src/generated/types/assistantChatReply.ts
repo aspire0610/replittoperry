@@ -12,7 +12,7 @@ import type { AssistantChatSource } from './assistantChatSource';
 export interface AssistantChatReply {
   /**
      * @minLength 1
-     * @maxLength 420
+     * @maxLength 1500
      */
   answer: string;
   aiProvider: AssistantChatReplyAiProvider;

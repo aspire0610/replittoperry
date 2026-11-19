@@ -36,15 +36,13 @@ import type {
   EtfMarket,
   FuturesAiDayStrategy,
   FuturesDayIntraday,
-  PaperAutomationDashboard,
-  PaperAutomationSettingsInput,
-  PaperAutomationStatusInput,
   GetAccountStockAiConversationParams,
   GetAdminUsersParams,
   GetMarketAiDailySummaryParams,
   GetMarketHistoryParams,
   GetStockAiAssessmentParams,
   GetStockHistoryParams,
+  GetStockIntradayParams,
   GetStockResearchDataParams,
   HealthStatus,
   InvitationSummary,
@@ -59,6 +57,9 @@ import type {
   MarketSummaryResponse,
   MarketWideAiPickScanJob,
   MarketWideAiPickScanRequest,
+  PaperAutomationDashboard,
+  PaperAutomationSettingsInput,
+  PaperAutomationStatusInput,
   PaperTradeInput,
   PaperTradingAccountInput,
   PaperTradingPortfolio,
@@ -77,10 +78,12 @@ import type {
   StockAiConversationUpdate,
   StockAiHistoricalValidationInput,
   StockAiHistoricalValidationProgress,
+  StockAiMonitorResponse,
   StockAiPicks,
   StockAiPicksProgress,
   StockCatalog,
   StockHistory,
+  StockIntradayResponse,
   StockResearchData,
   WatchlistUpdate
 } from './api.schemas';
@@ -277,7 +280,7 @@ export const getGetFuturesAiDayStrategyUrl = () => {
 }
 
 /**
- * Returns an intraday futures assessment using current session quotes and available TAIEX context. It does not invent intraday futures bars or exact order prices.
+ * Returns an intraday futures assessment using fresh synchronized day-session futures and TAIEX context. When action is wait, it still returns subjective conditional entry, stop, and target levels when live price evidence is available. An immediate entry reference must equal the fresh futures quote; stale quotes are never substituted.
  * @summary Get a Taiwan index futures day-session strategy
  */
 export const getFuturesAiDayStrategy = async ( options?: Parameters<typeof customFetch>[1]): Promise<FuturesAiDayStrategy> => {
@@ -334,6 +337,84 @@ export function useGetFuturesAiDayStrategy<TData = Awaited<ReturnType<typeof get
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetFuturesAiDayStrategyQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetFuturesDayIntradayUrl = () => {
+
+
+
+
+  return `/api/futures/day-intraday`
+}
+
+/**
+ * Returns observed session minute bars and locally calculated KD, plus the 15 most recent complete official TAIFEX TX day-session OHLC bars and their daily ATR14/4.
+ * @summary Get observed Taiwan index futures day-session minute bars
+ */
+export const getFuturesDayIntraday = async ( options?: Parameters<typeof customFetch>[1]): Promise<FuturesDayIntraday> => {
+
+  return customFetch<FuturesDayIntraday>(getGetFuturesDayIntradayUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetFuturesDayIntradayQueryKey = () => {
+    return [
+    `/api/futures/day-intraday`
+    ] as const;
+    }
+
+
+export const getGetFuturesDayIntradayQueryOptions = <TData = Awaited<ReturnType<typeof getFuturesDayIntraday>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFuturesDayIntraday>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetFuturesDayIntradayQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getFuturesDayIntraday>>> = ({ signal }) => getFuturesDayIntraday({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getFuturesDayIntraday>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetFuturesDayIntradayQueryResult = NonNullable<Awaited<ReturnType<typeof getFuturesDayIntraday>>>
+export type GetFuturesDayIntradayQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get observed Taiwan index futures day-session minute bars
+ */
+
+export function useGetFuturesDayIntraday<TData = Awaited<ReturnType<typeof getFuturesDayIntraday>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFuturesDayIntraday>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetFuturesDayIntradayQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -743,6 +824,167 @@ export function useGetStockHistory<TData = Awaited<ReturnType<typeof getStockHis
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetStockHistoryQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetStockAiMonitorUrl = () => {
+
+
+
+
+  return `/api/stocks/ai-monitor`
+}
+
+/**
+ * @summary Get categorized Taiwan stock and active ETF monitor data
+ */
+export const getStockAiMonitor = async ( options?: Parameters<typeof customFetch>[1]): Promise<StockAiMonitorResponse> => {
+
+  return customFetch<StockAiMonitorResponse>(getGetStockAiMonitorUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetStockAiMonitorQueryKey = () => {
+    return [
+    `/api/stocks/ai-monitor`
+    ] as const;
+    }
+
+
+export const getGetStockAiMonitorQueryOptions = <TData = Awaited<ReturnType<typeof getStockAiMonitor>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStockAiMonitor>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetStockAiMonitorQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStockAiMonitor>>> = ({ signal }) => getStockAiMonitor({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStockAiMonitor>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetStockAiMonitorQueryResult = NonNullable<Awaited<ReturnType<typeof getStockAiMonitor>>>
+export type GetStockAiMonitorQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Get categorized Taiwan stock and active ETF monitor data
+ */
+
+export function useGetStockAiMonitor<TData = Awaited<ReturnType<typeof getStockAiMonitor>>, TError = ErrorType<ErrorResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStockAiMonitor>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetStockAiMonitorQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetStockIntradayUrl = (params: GetStockIntradayParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/stocks/intraday?${stringifiedParams}` : `/api/stocks/intraday`
+}
+
+/**
+ * @summary Get verified one-minute candles for a Taiwan stock
+ */
+export const getStockIntraday = async (params: GetStockIntradayParams, options?: Parameters<typeof customFetch>[1]): Promise<StockIntradayResponse> => {
+
+  return customFetch<StockIntradayResponse>(getGetStockIntradayUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetStockIntradayQueryKey = (params?: GetStockIntradayParams,) => {
+    return [
+    `/api/stocks/intraday`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetStockIntradayQueryOptions = <TData = Awaited<ReturnType<typeof getStockIntraday>>, TError = ErrorType<ErrorResponse>>(params: GetStockIntradayParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStockIntraday>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetStockIntradayQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStockIntraday>>> = ({ signal }) => getStockIntraday(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStockIntraday>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetStockIntradayQueryResult = NonNullable<Awaited<ReturnType<typeof getStockIntraday>>>
+export type GetStockIntradayQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Get verified one-minute candles for a Taiwan stock
+ */
+
+export function useGetStockIntraday<TData = Awaited<ReturnType<typeof getStockIntraday>>, TError = ErrorType<ErrorResponse>>(
+ params: GetStockIntradayParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStockIntraday>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetStockIntradayQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -1331,7 +1573,7 @@ export const getGetStockAiAssessmentUrl = (params: GetStockAiAssessmentParams,) 
 }
 
 /**
- * Evaluates the latest provider-sourced quote and exchange daily indicators, with conditional technical price references when validated. Includes a separate fixed-rule historical strategy backtest; this is not the AI recommendation's win rate or investment advice.
+ * Evaluates the latest provider-sourced quote and exchange daily indicators, with conditional technical price references when validated. With entryMode=current_price, judges whether the latest verified trade is suitable for short-term entry and requires the entry reference to match that quote. Includes a separate fixed-rule historical strategy backtest; this is not the AI recommendation's win rate or investment advice.
  * @summary Get AI-assisted Taiwan stock assessment
  */
 export const getStockAiAssessment = async (params: GetStockAiAssessmentParams, options?: Parameters<typeof customFetch>[1]): Promise<StockAiAssessment> => {
@@ -3776,6 +4018,261 @@ export const usePostAccountPaperTrading = <TError = ErrorType<ErrorResponse>,
       return useMutation(getPostAccountPaperTradingMutationOptions(options));
     }
 
+export const getGetAccountPaperTradingAutomationUrl = () => {
+
+
+
+
+  return `/api/account/paper-trading/automation`
+}
+
+/**
+ * @summary Get the signed-in user's autonomous paper-trading state
+ */
+export const getAccountPaperTradingAutomation = async ( options?: Parameters<typeof customFetch>[1]): Promise<PaperAutomationDashboard> => {
+
+  return customFetch<PaperAutomationDashboard>(getGetAccountPaperTradingAutomationUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAccountPaperTradingAutomationQueryKey = () => {
+    return [
+    `/api/account/paper-trading/automation`
+    ] as const;
+    }
+
+
+export const getGetAccountPaperTradingAutomationQueryOptions = <TData = Awaited<ReturnType<typeof getAccountPaperTradingAutomation>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountPaperTradingAutomation>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAccountPaperTradingAutomationQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAccountPaperTradingAutomation>>> = ({ signal }) => getAccountPaperTradingAutomation({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAccountPaperTradingAutomation>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAccountPaperTradingAutomationQueryResult = NonNullable<Awaited<ReturnType<typeof getAccountPaperTradingAutomation>>>
+export type GetAccountPaperTradingAutomationQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Get the signed-in user's autonomous paper-trading state
+ */
+
+export function useGetAccountPaperTradingAutomation<TData = Awaited<ReturnType<typeof getAccountPaperTradingAutomation>>, TError = ErrorType<ErrorResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountPaperTradingAutomation>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAccountPaperTradingAutomationQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getPutAccountPaperTradingAutomationUrl = () => {
+
+
+
+
+  return `/api/account/paper-trading/automation`
+}
+
+/**
+ * Updates a paper-only simulation account. It never connects to a broker or sends real orders.
+ * @summary Create or update autonomous paper-trading risk settings
+ */
+export const putAccountPaperTradingAutomation = async (paperAutomationSettingsInput: PaperAutomationSettingsInput, options?: Parameters<typeof customFetch>[1]): Promise<PaperAutomationDashboard> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<PaperAutomationDashboard>(getPutAccountPaperTradingAutomationUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(paperAutomationSettingsInput)
+  }
+);}
+
+
+
+
+
+export const getPutAccountPaperTradingAutomationMutationKey = () => ['putAccountPaperTradingAutomation'] as const;
+
+export const getPutAccountPaperTradingAutomationMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof putAccountPaperTradingAutomation>>, TError,PutAccountPaperTradingAutomationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof putAccountPaperTradingAutomation>>, TError,PutAccountPaperTradingAutomationMutationVariables, TContext> => {
+
+const mutationKey = getPutAccountPaperTradingAutomationMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof putAccountPaperTradingAutomation>>, PutAccountPaperTradingAutomationMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  putAccountPaperTradingAutomation(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PutAccountPaperTradingAutomationMutationResult = NonNullable<Awaited<ReturnType<typeof putAccountPaperTradingAutomation>>>
+    export type PutAccountPaperTradingAutomationMutationBody = BodyType<PaperAutomationSettingsInput>
+    export type PutAccountPaperTradingAutomationMutationError = ErrorType<ErrorResponse>
+    export type PutAccountPaperTradingAutomationMutationVariables = {data: BodyType<PaperAutomationSettingsInput>}
+
+    /**
+ * @summary Create or update autonomous paper-trading risk settings
+ */
+export const usePutAccountPaperTradingAutomation = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof putAccountPaperTradingAutomation>>, TError,PutAccountPaperTradingAutomationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof putAccountPaperTradingAutomation>>,
+        TError,
+        PutAccountPaperTradingAutomationMutationVariables,
+        TContext
+      > => {
+      return useMutation(getPutAccountPaperTradingAutomationMutationOptions(options));
+    }
+
+export const getPatchAccountPaperTradingAutomationStatusUrl = () => {
+
+
+
+
+  return `/api/account/paper-trading/automation/status`
+}
+
+/**
+ * Simulated orders only. Enabling requires either an active stock research agent or Taiwan futures automation.
+ * @summary Enable or pause autonomous paper trading
+ */
+export const patchAccountPaperTradingAutomationStatus = async (paperAutomationStatusInput: PaperAutomationStatusInput, options?: Parameters<typeof customFetch>[1]): Promise<PaperAutomationDashboard> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<PaperAutomationDashboard>(getPatchAccountPaperTradingAutomationStatusUrl(),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(paperAutomationStatusInput)
+  }
+);}
+
+
+
+
+
+export const getPatchAccountPaperTradingAutomationStatusMutationKey = () => ['patchAccountPaperTradingAutomationStatus'] as const;
+
+export const getPatchAccountPaperTradingAutomationStatusMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchAccountPaperTradingAutomationStatus>>, TError,PatchAccountPaperTradingAutomationStatusMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof patchAccountPaperTradingAutomationStatus>>, TError,PatchAccountPaperTradingAutomationStatusMutationVariables, TContext> => {
+
+const mutationKey = getPatchAccountPaperTradingAutomationStatusMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof patchAccountPaperTradingAutomationStatus>>, PatchAccountPaperTradingAutomationStatusMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  patchAccountPaperTradingAutomationStatus(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PatchAccountPaperTradingAutomationStatusMutationResult = NonNullable<Awaited<ReturnType<typeof patchAccountPaperTradingAutomationStatus>>>
+    export type PatchAccountPaperTradingAutomationStatusMutationBody = BodyType<PaperAutomationStatusInput>
+    export type PatchAccountPaperTradingAutomationStatusMutationError = ErrorType<ErrorResponse>
+    export type PatchAccountPaperTradingAutomationStatusMutationVariables = {data: BodyType<PaperAutomationStatusInput>}
+
+    /**
+ * @summary Enable or pause autonomous paper trading
+ */
+export const usePatchAccountPaperTradingAutomationStatus = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchAccountPaperTradingAutomationStatus>>, TError,PatchAccountPaperTradingAutomationStatusMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof patchAccountPaperTradingAutomationStatus>>,
+        TError,
+        PatchAccountPaperTradingAutomationStatusMutationVariables,
+        TContext
+      > => {
+      return useMutation(getPatchAccountPaperTradingAutomationStatusMutationOptions(options));
+    }
+
 export const getPostAccountPaperTradingResetUrl = () => {
 
 
@@ -4350,329 +4847,3 @@ export const useDeleteAdminUser = <TError = ErrorType<ErrorResponse>,
       return useMutation(getDeleteAdminUserMutationOptions(options));
     }
 
-export const getGetFuturesDayIntradayUrl = () => {
-
-
-
-
-  return `/api/futures/day-intraday`
-}
-
-/**
- * Returns observed session minute bars and locally calculated KD, plus the 15 most recent complete official TAIFEX TX day-session OHLC bars and their daily ATR14/4.
- * @summary Get observed Taiwan index futures day-session minute bars
- */
-export const getFuturesDayIntraday = async ( options?: Parameters<typeof customFetch>[1]): Promise<FuturesDayIntraday> => {
-
-  return customFetch<FuturesDayIntraday>(getGetFuturesDayIntradayUrl(),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getGetFuturesDayIntradayQueryKey = () => {
-    return [
-    `/api/futures/day-intraday`
-    ] as const;
-    }
-
-
-export const getGetFuturesDayIntradayQueryOptions = <TData = Awaited<ReturnType<typeof getFuturesDayIntraday>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFuturesDayIntraday>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetFuturesDayIntradayQueryKey();
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getFuturesDayIntraday>>> = ({ signal }) => getFuturesDayIntraday({ signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getFuturesDayIntraday>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type GetFuturesDayIntradayQueryResult = NonNullable<Awaited<ReturnType<typeof getFuturesDayIntraday>>>
-export type GetFuturesDayIntradayQueryError = ErrorType<unknown>
-
-
-/**
- * @summary Get observed Taiwan index futures day-session minute bars
- */
-
-export function useGetFuturesDayIntraday<TData = Awaited<ReturnType<typeof getFuturesDayIntraday>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFuturesDayIntraday>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getGetFuturesDayIntradayQueryOptions(options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return withQueryKey(query, queryOptions.queryKey);
-}
-
-export const getGetAccountPaperTradingAutomationUrl = () => {
-
-
-
-
-  return `/api/account/paper-trading/automation`
-}
-
-/**
- * @summary Get the signed-in user's autonomous paper-trading state
- */
-export const getAccountPaperTradingAutomation = async ( options?: Parameters<typeof customFetch>[1]): Promise<PaperAutomationDashboard> => {
-
-  return customFetch<PaperAutomationDashboard>(getGetAccountPaperTradingAutomationUrl(),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getGetAccountPaperTradingAutomationQueryKey = () => {
-    return [
-    `/api/account/paper-trading/automation`
-    ] as const;
-    }
-
-
-export const getGetAccountPaperTradingAutomationQueryOptions = <TData = Awaited<ReturnType<typeof getAccountPaperTradingAutomation>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountPaperTradingAutomation>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetAccountPaperTradingAutomationQueryKey();
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAccountPaperTradingAutomation>>> = ({ signal }) => getAccountPaperTradingAutomation({ signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAccountPaperTradingAutomation>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type GetAccountPaperTradingAutomationQueryResult = NonNullable<Awaited<ReturnType<typeof getAccountPaperTradingAutomation>>>
-export type GetAccountPaperTradingAutomationQueryError = ErrorType<ErrorResponse>
-
-
-/**
- * @summary Get the signed-in user's autonomous paper-trading state
- */
-
-export function useGetAccountPaperTradingAutomation<TData = Awaited<ReturnType<typeof getAccountPaperTradingAutomation>>, TError = ErrorType<ErrorResponse>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountPaperTradingAutomation>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getGetAccountPaperTradingAutomationQueryOptions(options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return withQueryKey(query, queryOptions.queryKey);
-}
-
-
-
-
-
-
-
-export const getPutAccountPaperTradingAutomationUrl = () => {
-
-
-
-
-  return `/api/account/paper-trading/automation`
-}
-
-/**
- * Updates a paper-only simulation account. It never connects to a broker or sends real orders.
- * @summary Create or update autonomous paper-trading risk settings
- */
-export const putAccountPaperTradingAutomation = async (paperAutomationSettingsInput: PaperAutomationSettingsInput, options?: Parameters<typeof customFetch>[1]): Promise<PaperAutomationDashboard> => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return customFetch<PaperAutomationDashboard>(getPutAccountPaperTradingAutomationUrl(),
-  {
-    ...options,
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(paperAutomationSettingsInput)
-  }
-);}
-
-
-
-
-
-export const getPutAccountPaperTradingAutomationMutationKey = () => ['putAccountPaperTradingAutomation'] as const;
-
-export const getPutAccountPaperTradingAutomationMutationOptions = <TError = ErrorType<ErrorResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof putAccountPaperTradingAutomation>>, TError,PutAccountPaperTradingAutomationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof putAccountPaperTradingAutomation>>, TError,PutAccountPaperTradingAutomationMutationVariables, TContext> => {
-
-const mutationKey = getPutAccountPaperTradingAutomationMutationKey();
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof putAccountPaperTradingAutomation>>, PutAccountPaperTradingAutomationMutationVariables> = (props) => {
-          const {data} = props ?? {};
-
-          return  putAccountPaperTradingAutomation(data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type PutAccountPaperTradingAutomationMutationResult = NonNullable<Awaited<ReturnType<typeof putAccountPaperTradingAutomation>>>
-    export type PutAccountPaperTradingAutomationMutationBody = BodyType<PaperAutomationSettingsInput>
-    export type PutAccountPaperTradingAutomationMutationError = ErrorType<ErrorResponse>
-    export type PutAccountPaperTradingAutomationMutationVariables = {data: BodyType<PaperAutomationSettingsInput>}
-
-    /**
- * @summary Create or update autonomous paper-trading risk settings
- */
-export const usePutAccountPaperTradingAutomation = <TError = ErrorType<ErrorResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof putAccountPaperTradingAutomation>>, TError,PutAccountPaperTradingAutomationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof putAccountPaperTradingAutomation>>,
-        TError,
-        PutAccountPaperTradingAutomationMutationVariables,
-        TContext
-      > => {
-      return useMutation(getPutAccountPaperTradingAutomationMutationOptions(options));
-    }
-
-export const getPatchAccountPaperTradingAutomationStatusUrl = () => {
-
-
-
-
-  return `/api/account/paper-trading/automation/status`
-}
-
-/**
- * Simulated orders only. Enabling requires either an active stock research agent or Taiwan futures automation.
- * @summary Enable or pause autonomous paper trading
- */
-export const patchAccountPaperTradingAutomationStatus = async (paperAutomationStatusInput: PaperAutomationStatusInput, options?: Parameters<typeof customFetch>[1]): Promise<PaperAutomationDashboard> => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return customFetch<PaperAutomationDashboard>(getPatchAccountPaperTradingAutomationStatusUrl(),
-  {
-    ...options,
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(paperAutomationStatusInput)
-  }
-);}
-
-
-
-
-
-export const getPatchAccountPaperTradingAutomationStatusMutationKey = () => ['patchAccountPaperTradingAutomationStatus'] as const;
-
-export const getPatchAccountPaperTradingAutomationStatusMutationOptions = <TError = ErrorType<ErrorResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchAccountPaperTradingAutomationStatus>>, TError,PatchAccountPaperTradingAutomationStatusMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof patchAccountPaperTradingAutomationStatus>>, TError,PatchAccountPaperTradingAutomationStatusMutationVariables, TContext> => {
-
-const mutationKey = getPatchAccountPaperTradingAutomationStatusMutationKey();
-const {mutation: mutationOptions, request: requestOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }, request: undefined};
-
-
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof patchAccountPaperTradingAutomationStatus>>, PatchAccountPaperTradingAutomationStatusMutationVariables> = (props) => {
-          const {data} = props ?? {};
-
-          return  patchAccountPaperTradingAutomationStatus(data,requestOptions)
-        }
-
-
-
-
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type PatchAccountPaperTradingAutomationStatusMutationResult = NonNullable<Awaited<ReturnType<typeof patchAccountPaperTradingAutomationStatus>>>
-    export type PatchAccountPaperTradingAutomationStatusMutationBody = BodyType<PaperAutomationStatusInput>
-    export type PatchAccountPaperTradingAutomationStatusMutationError = ErrorType<ErrorResponse>
-    export type PatchAccountPaperTradingAutomationStatusMutationVariables = {data: BodyType<PaperAutomationStatusInput>}
-
-    /**
- * @summary Enable or pause autonomous paper trading
- */
-export const usePatchAccountPaperTradingAutomationStatus = <TError = ErrorType<ErrorResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof patchAccountPaperTradingAutomationStatus>>, TError,PatchAccountPaperTradingAutomationStatusMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
- ): UseMutationResult<
-        Awaited<ReturnType<typeof patchAccountPaperTradingAutomationStatus>>,
-        TError,
-        PatchAccountPaperTradingAutomationStatusMutationVariables,
-        TContext
-      > => {
-      return useMutation(getPatchAccountPaperTradingAutomationStatusMutationOptions(options));
-    }

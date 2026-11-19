@@ -17,6 +17,7 @@ export const AssistantChatReplyAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   gemini: 'gemini',
+  replit: 'replit',
   nvidia_nim: 'nvidia_nim',
   rule_based: 'rule_based',
 } as const;

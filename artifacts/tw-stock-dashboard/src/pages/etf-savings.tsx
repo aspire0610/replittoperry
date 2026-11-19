@@ -34,6 +34,12 @@ const navTime = (value: string | null | undefined) =>
         hour12: false,
         timeZone: "Asia/Taipei",
       }).format(new Date(value));
+const latestQuoteTime = (value: string | null | undefined) =>
+  value == null
+    ? "無報價時間"
+    : /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? value.replaceAll("-", "/")
+      : navTime(value);
 
 export default function EtfSavingsPage() {
   const { isSignedIn, isLoading: accountLoading, profile } = useAccountWatchlist();
@@ -66,7 +72,7 @@ export default function EtfSavingsPage() {
   );
   const topTen = useMemo(
     () => instruments
-      .filter((item) => item.trailing12MonthYieldPercent != null && item.trailing12MonthDividend > 0)
+      .filter((item) => item.trailing12MonthYieldPercent != null && item.trailing12MonthDividend != null && item.trailing12MonthDividend > 0)
       .toSorted((a, b) => (b.trailing12MonthYieldPercent ?? -1) - (a.trailing12MonthYieldPercent ?? -1))
       .slice(0, 10),
     [instruments],
@@ -80,10 +86,12 @@ export default function EtfSavingsPage() {
     ).slice(0, 12);
   }, [instruments, query]);
   const selected = bySymbol.get(symbol);
-  const annualEstimate = holdings.reduce(
-    (sum, holding) => sum + (bySymbol.get(holding.symbol)?.trailing12MonthDividend ?? 0) * holding.shares,
-    0,
-  );
+  const annualEstimate = market.data?.distributionDataStatus === "available"
+    ? holdings.reduce(
+        (sum, holding) => sum + (bySymbol.get(holding.symbol)?.trailing12MonthDividend ?? 0) * holding.shares,
+        0,
+      )
+    : null;
 
   const addHolding = () => {
     const shares = Number(sharesInput);
@@ -149,15 +157,17 @@ export default function EtfSavingsPage() {
       </section>
       <section className="glass-panel etf-table-panel">
         <div className="etf-section-title"><div><span className="section-eyebrow">TOP 10 BY TRAILING DISTRIBUTION YIELD</span><h2>近 12 個月歷史配息率前 10 名</h2></div><div className="etf-asof"><span>行情日期：{market.data?.asOf?.slice(0, 10) ?? "—"}</span><span>淨值更新至：{navTime(market.data?.navDataUpdatedAt)}</span></div></div>
+        {market.data?.distributionDataStatus === "unavailable" && !market.isLoading && <p className="etf-state" role="status">官方配息資料暫時無法取得；ETF 清單仍可使用，殖利率與配息估算暫不顯示。</p>}
         {market.isLoading ? <p className="etf-state" role="status">正在載入 ETF 清單與配息紀錄…</p> : market.isError ? <p className="etf-state error" role="alert"><CircleAlert size={16}/> ETF 資料暫時無法載入。<button type="button" onClick={() => void market.refetch()}><RefreshCw size={14}/>重試</button></p> : (
           <>
-            <div className="etf-table-scroll"><table><thead><tr><th>代號／名稱</th><th>市價</th><th>預估淨值</th><th>折溢價金額</th><th>折溢價率</th><th>配息概況</th><th>年殖利率*</th><th></th></tr></thead><tbody>
+            <div className="etf-table-scroll"><table><thead><tr><th>代號／名稱</th><th>即時價／最近收盤</th><th>市價</th><th>預估淨值</th><th>折溢價金額</th><th>折溢價率</th><th>配息概況</th><th>年殖利率*</th><th></th></tr></thead><tbody>
               {topTen.map((item, index) => {
                 const premiumClass = item.discountPremiumAmount == null || item.discountPremiumAmount === 0
                   ? ""
                   : item.discountPremiumAmount > 0 ? "etf-premium-positive" : "etf-premium-negative";
                 return <tr key={item.symbol}>
                   <td><span className="etf-rank">{String(index + 1).padStart(2, "0")}</span><strong>{item.symbol}</strong><small>{item.name}</small></td>
+                  <td className="etf-numeric"><span className="etf-cell-main">{quoteMoney(item.latestPrice)}</span><small className="etf-cell-subtitle">{item.latestPriceSource} · {latestQuoteTime(item.latestPriceAsOf)}</small></td>
                   <td className="etf-numeric">{quoteMoney(item.marketPrice)}</td>
                   <td className="etf-numeric"><span className="etf-cell-main">{quoteMoney(item.netAssetValue)}</span><small className="etf-cell-subtitle">{navTime(item.navUpdatedAt)}</small></td>
                   <td className={`etf-numeric ${premiumClass}`}>{quoteMoney(item.discountPremiumAmount)}</td>
@@ -185,6 +195,7 @@ export default function EtfSavingsPage() {
                     </div>
                   </div>
                   <div className="etf-mobile-metrics">
+                    <div><span>即時價／最近收盤</span><strong>{quoteMoney(item.latestPrice)}</strong><small>{item.latestPriceSource} · {latestQuoteTime(item.latestPriceAsOf)}</small></div>
                     <div><span>市價</span><strong>{quoteMoney(item.marketPrice)}</strong></div>
                     <div><span>預估淨值</span><strong>{quoteMoney(item.netAssetValue)}</strong><small>{navTime(item.navUpdatedAt)}</small></div>
                     <div><span>折溢價金額</span><strong className={premiumClass}>{quoteMoney(item.discountPremiumAmount)}</strong></div>

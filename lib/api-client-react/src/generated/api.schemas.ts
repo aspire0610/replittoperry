@@ -102,6 +102,34 @@ export const FuturesAiDayStrategyAction = {
   insufficient: 'insufficient',
 } as const;
 
+export type FuturesAiDayStrategyEntryPlanStatus = typeof FuturesAiDayStrategyEntryPlanStatus[keyof typeof FuturesAiDayStrategyEntryPlanStatus];
+
+
+export const FuturesAiDayStrategyEntryPlanStatus = {
+  available: 'available',
+  unavailable: 'unavailable',
+} as const;
+
+export type FuturesAiDayStrategyEntryPlanMode = typeof FuturesAiDayStrategyEntryPlanMode[keyof typeof FuturesAiDayStrategyEntryPlanMode];
+
+
+export const FuturesAiDayStrategyEntryPlanMode = {
+  current: 'current',
+  conditional: 'conditional',
+  reference: 'reference',
+} as const;
+
+/**
+ * @nullable
+ */
+export type FuturesAiDayStrategyPlanDirection = typeof FuturesAiDayStrategyPlanDirection[keyof typeof FuturesAiDayStrategyPlanDirection] | null;
+
+
+export const FuturesAiDayStrategyPlanDirection = {
+  long: 'long',
+  short: 'short',
+} as const;
+
 /**
  * @nullable
  */
@@ -116,6 +144,7 @@ export const FuturesAiDayStrategyAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   gemini: 'gemini',
+  replit: 'replit',
   nvidia_nim: 'nvidia_nim',
 } as const;
 
@@ -168,6 +197,42 @@ export interface FuturesAiDayStrategy {
   invalidationCondition: string;
   /** @maxLength 180 */
   riskNote: string;
+  entryPlanStatus: FuturesAiDayStrategyEntryPlanStatus;
+  entryPlanMode: FuturesAiDayStrategyEntryPlanMode;
+  /** @nullable */
+  planDirection: FuturesAiDayStrategyPlanDirection;
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  entryPrice: number | null;
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  stopLossPrice: number | null;
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  targetPrice: number | null;
+  /**
+     * @maxLength 160
+     * @nullable
+     */
+  entryReason: string | null;
+  /**
+     * @maxLength 160
+     * @nullable
+     */
+  stopLossReason: string | null;
+  /**
+     * @maxLength 160
+     * @nullable
+     */
+  targetReason: string | null;
+  /** @maxLength 180 */
+  entryPlanMessage: string;
   /** @nullable */
   aiProvider: FuturesAiDayStrategyAiProvider;
   dataCoverage: FuturesAiDayStrategyDataCoverage;
@@ -177,6 +242,115 @@ export interface FuturesAiDayStrategy {
   analyzedAt: string;
   /** @maxLength 220 */
   disclaimer: string;
+}
+
+export type FuturesDayIntradayStatus = typeof FuturesDayIntradayStatus[keyof typeof FuturesDayIntradayStatus];
+
+
+export const FuturesDayIntradayStatus = {
+  live: 'live',
+  warming_up: 'warming_up',
+  closed: 'closed',
+  unavailable: 'unavailable',
+} as const;
+
+export type FuturesDayIntradaySignal = typeof FuturesDayIntradaySignal[keyof typeof FuturesDayIntradaySignal];
+
+
+export const FuturesDayIntradaySignal = {
+  bullish_cross: 'bullish_cross',
+  bearish_cross: 'bearish_cross',
+  no_cross: 'no_cross',
+  insufficient: 'insufficient',
+} as const;
+
+export interface FuturesMinuteBar {
+  time: string;
+  /** @exclusiveMinimum 0 */
+  open: number;
+  /** @exclusiveMinimum 0 */
+  high: number;
+  /** @exclusiveMinimum 0 */
+  low: number;
+  /** @exclusiveMinimum 0 */
+  close: number;
+}
+
+export type FuturesDailyHistoryStatus = typeof FuturesDailyHistoryStatus[keyof typeof FuturesDailyHistoryStatus];
+
+
+export const FuturesDailyHistoryStatus = {
+  available: 'available',
+  insufficient: 'insufficient',
+  unavailable: 'unavailable',
+} as const;
+
+export interface FuturesDailyBar {
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  date: string;
+  /** @pattern ^\d{6}$ */
+  contractMonth: string;
+  /** @exclusiveMinimum 0 */
+  open: number;
+  /** @exclusiveMinimum 0 */
+  high: number;
+  /** @exclusiveMinimum 0 */
+  low: number;
+  /** @exclusiveMinimum 0 */
+  close: number;
+}
+
+export interface FuturesDailyHistory {
+  status: FuturesDailyHistoryStatus;
+  bars: FuturesDailyBar[];
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  atr14: number | null;
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  atr14By4: number | null;
+  /** @nullable */
+  asOf: string | null;
+  source: string;
+}
+
+export interface FuturesDayIntraday {
+  status: FuturesDayIntradayStatus;
+  /** @nullable */
+  symbol: string | null;
+  /** @pattern ^\d{8}$ */
+  date: string;
+  bars: FuturesMinuteBar[];
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  k: number | null;
+  /**
+     * @minimum 0
+     * @maximum 100
+     * @nullable
+     */
+  d: number | null;
+  signal: FuturesDayIntradaySignal;
+  /**
+     * @exclusiveMinimum 0
+     * @nullable
+     */
+  price: number | null;
+  /** @nullable */
+  change: number | null;
+  /** @nullable */
+  changePercent: number | null;
+  /** @nullable */
+  asOf: string | null;
+  source: string;
+  dailyHistory: FuturesDailyHistory;
 }
 
 export interface MarketOverview {
@@ -322,6 +496,7 @@ export const MarketAiDailySummaryAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   gemini: 'gemini',
+  replit: 'replit',
   nvidia_nim: 'nvidia_nim',
 } as const;
 
@@ -341,6 +516,8 @@ export interface MarketAiDailySummary {
   quoteAsOf: string | null;
   newsSearchStatus: MarketAiDailySummaryNewsSearchStatus;
   newsSources: MarketNewsSource[];
+  /** Official calendars queried directly, separate from unverified news search results. */
+  officialEventSources: MarketNewsSource[];
   /**
      * @maxLength 500
      * @nullable
@@ -443,6 +620,117 @@ export interface StockHistory {
   bars: OhlcBar[];
 }
 
+export type StockAiMonitorItemExchange = typeof StockAiMonitorItemExchange[keyof typeof StockAiMonitorItemExchange];
+
+
+export const StockAiMonitorItemExchange = {
+  twse: 'twse',
+  tpex: 'tpex',
+} as const;
+
+export type StockAiMonitorItemStatus = typeof StockAiMonitorItemStatus[keyof typeof StockAiMonitorItemStatus];
+
+
+export const StockAiMonitorItemStatus = {
+  多方轉強: '多方轉強',
+  偏多: '偏多',
+  多空拉鋸: '多空拉鋸',
+  偏空: '偏空',
+  空方轉強: '空方轉強',
+  資料不足: '資料不足',
+} as const;
+
+export interface StockAiMonitorItem {
+  symbol: string;
+  ticker: string;
+  name: string;
+  exchange: StockAiMonitorItemExchange;
+  /** @minimum 0 */
+  price: number;
+  /** @nullable */
+  changePercent: number | null;
+  /**
+     * @minimum -100
+     * @maximum 100
+     * @nullable
+     */
+  force: number | null;
+  status: StockAiMonitorItemStatus;
+  signal: string;
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  asOf: string;
+  source: string;
+  forceDefinition: string;
+}
+
+export type StockAiMonitorCategoryId = typeof StockAiMonitorCategoryId[keyof typeof StockAiMonitorCategoryId];
+
+
+export const StockAiMonitorCategoryId = {
+  yesterday_strength: 'yesterday_strength',
+  active_etf: 'active_etf',
+  candlestick: 'candlestick',
+  five_day_strength: 'five_day_strength',
+  ten_day_strength: 'ten_day_strength',
+  bollinger_expansion: 'bollinger_expansion',
+  trend: 'trend',
+  surge: 'surge',
+  ma_cluster_breakout: 'ma_cluster_breakout',
+  break_five_day_average: 'break_five_day_average',
+} as const;
+
+export interface StockAiMonitorCategory {
+  id: StockAiMonitorCategoryId;
+  label: string;
+  /** @minimum 0 */
+  count: number;
+  items: StockAiMonitorItem[];
+}
+
+export interface StockAiMonitorCoverage {
+  /** @minimum 0 */
+  universe: number;
+  /** @minimum 0 */
+  withHistory: number;
+  partial: boolean;
+}
+
+export interface StockAiMonitorResponse {
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  marketDate: string;
+  analyzedAt: string;
+  source: string;
+  coverage: StockAiMonitorCoverage;
+  categories: StockAiMonitorCategory[];
+}
+
+export type StockIntradayResponseTimeframe = typeof StockIntradayResponseTimeframe[keyof typeof StockIntradayResponseTimeframe];
+
+
+export const StockIntradayResponseTimeframe = {
+  '1m': '1m',
+} as const;
+
+export type StockIntradayResponseSessionType = typeof StockIntradayResponseSessionType[keyof typeof StockIntradayResponseSessionType];
+
+
+export const StockIntradayResponseSessionType = {
+  live: 'live',
+  historical: 'historical',
+} as const;
+
+export interface StockIntradayResponse {
+  symbol: string;
+  ticker: string;
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  date: string;
+  timeframe: StockIntradayResponseTimeframe;
+  sessionType: StockIntradayResponseSessionType;
+  source: string;
+  asOf: string;
+  bars: MarketIntradayBar[];
+}
+
 export type StockCatalogInstrumentExchange = typeof StockCatalogInstrumentExchange[keyof typeof StockCatalogInstrumentExchange];
 
 
@@ -501,6 +789,14 @@ export interface EtfMarketInstrument {
      * @minimum 0
      * @nullable
      */
+  latestPrice: number | null;
+  latestPriceSource: string;
+  /** @nullable */
+  latestPriceAsOf: string | null;
+  /**
+     * @minimum 0
+     * @nullable
+     */
   marketPrice: number | null;
   /**
      * @minimum 0
@@ -514,8 +810,11 @@ export interface EtfMarketInstrument {
   /** @nullable */
   navUpdatedAt: string | null;
   distributions: EtfDistribution[];
-  /** @minimum 0 */
-  trailing12MonthDividend: number;
+  /**
+     * @minimum 0
+     * @nullable
+     */
+  trailing12MonthDividend: number | null;
   /**
      * @minimum 0
      * @nullable
@@ -529,6 +828,14 @@ export interface EtfMarketInstrument {
   frequency: string;
 }
 
+export type EtfMarketDistributionDataStatus = typeof EtfMarketDistributionDataStatus[keyof typeof EtfMarketDistributionDataStatus];
+
+
+export const EtfMarketDistributionDataStatus = {
+  available: 'available',
+  unavailable: 'unavailable',
+} as const;
+
 export type EtfMarketNavDataStatus = typeof EtfMarketNavDataStatus[keyof typeof EtfMarketNavDataStatus];
 
 
@@ -541,6 +848,7 @@ export const EtfMarketNavDataStatus = {
 export interface EtfMarket {
   asOf: string;
   source: string;
+  distributionDataStatus: EtfMarketDistributionDataStatus;
   navDataStatus: EtfMarketNavDataStatus;
   /** @nullable */
   navDataUpdatedAt: string | null;
@@ -670,6 +978,7 @@ export const StockAiPicksAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   gemini: 'gemini',
+  replit: 'replit',
   nvidia_nim: 'nvidia_nim',
 } as const;
 
@@ -1233,6 +1542,7 @@ export const StockAiAssessmentAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   gemini: 'gemini',
+  replit: 'replit',
   nvidia_nim: 'nvidia_nim',
   rule_based: 'rule_based',
 } as const;
@@ -1787,6 +2097,7 @@ export const StockAiBuyPriceVerdictAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   gemini: 'gemini',
+  replit: 'replit',
   nvidia_nim: 'nvidia_nim',
 } as const;
 
@@ -1853,6 +2164,7 @@ export const StockAiAssistantReplyAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   gemini: 'gemini',
+  replit: 'replit',
   nvidia_nim: 'nvidia_nim',
 } as const;
 
@@ -2084,6 +2396,7 @@ export const AssistantChatReplyAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   gemini: 'gemini',
+  replit: 'replit',
   nvidia_nim: 'nvidia_nim',
   rule_based: 'rule_based',
 } as const;
@@ -2100,7 +2413,7 @@ export const AssistantChatReplySearchStatus = {
 export interface AssistantChatReply {
   /**
      * @minLength 1
-     * @maxLength 420
+     * @maxLength 1500
      */
   answer: string;
   aiProvider: AssistantChatReplyAiProvider;
@@ -2180,6 +2493,7 @@ export const StockAiConversationMessageAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   gemini: 'gemini',
+  replit: 'replit',
   nvidia_nim: 'nvidia_nim',
   rule_based: 'rule_based',
 } as const;
@@ -2515,6 +2829,7 @@ export const QuantResearchInterpretationAiProvider = {
   ollama: 'ollama',
   openrouter: 'openrouter',
   openai: 'openai',
+  replit: 'replit',
   nvidia_nim: 'nvidia_nim',
 } as const;
 
@@ -2938,6 +3253,7 @@ export const QuantResearchResultAiProvider = {
   groq: 'groq',
   ollama: 'ollama',
   openrouter: 'openrouter',
+  replit: 'replit',
   nvidia_nim: 'nvidia_nim',
 } as const;
 
@@ -3061,289 +3377,6 @@ export interface PaperTradingAccountInput {
      * @maximum 100000000
      */
   startingCash: number;
-}
-
-export type PaperTradeInputSide = typeof PaperTradeInputSide[keyof typeof PaperTradeInputSide];
-
-
-export const PaperTradeInputSide = {
-  buy: 'buy',
-  sell: 'sell',
-} as const;
-
-export interface PaperTradeInput {
-  /** @pattern ^[A-Za-z0-9]{4,6}\.(TW|TWO)$ */
-  ticker: string;
-  side: PaperTradeInputSide;
-  /**
-     * @minimum 1
-     * @maximum 10000000
-     */
-  shares: number;
-  /**
-     * @minimum 0.01
-     * @maximum 1000000
-     */
-  price: number;
-}
-
-export interface PaperTradingPosition {
-  ticker: string;
-  name: string;
-  shares: number;
-  averageCost: number;
-  /** @nullable */
-  latestClose: number | null;
-  /** @nullable */
-  marketValue: number | null;
-  /** @nullable */
-  unrealizedPnl: number | null;
-}
-
-export type PaperTradingTradeSide = typeof PaperTradingTradeSide[keyof typeof PaperTradingTradeSide];
-
-
-export const PaperTradingTradeSide = {
-  buy: 'buy',
-  sell: 'sell',
-} as const;
-
-export interface PaperTradingTrade {
-  id: number;
-  ticker: string;
-  name: string;
-  side: PaperTradingTradeSide;
-  shares: number;
-  price: number;
-  grossAmount: number;
-  commission: number;
-  transactionTax: number;
-  realizedPnl: number;
-  tradingDate: string;
-  createdAt: string;
-}
-
-export interface PaperTradingPortfolio {
-  initialized: boolean;
-  /** @nullable */
-  startingCash: number | null;
-  /** @nullable */
-  cash: number | null;
-  /** @nullable */
-  marketValue: number | null;
-  /** @nullable */
-  equity: number | null;
-  /** @nullable */
-  returnPercent: number | null;
-  /** @nullable */
-  asOf: string | null;
-  positions: PaperTradingPosition[];
-  /** @maxItems 100 */
-  trades: PaperTradingTrade[];
-  disclaimer: string;
-}
-
-export type GetMarketAiDailySummaryParams = {
-mode?: GetMarketAiDailySummaryMode;
-};
-
-export type GetMarketAiDailySummaryMode = typeof GetMarketAiDailySummaryMode[keyof typeof GetMarketAiDailySummaryMode];
-
-
-export const GetMarketAiDailySummaryMode = {
-  premarket: 'premarket',
-  closing: 'closing',
-} as const;
-
-export type GetMarketHistoryParams = {
-range?: GetMarketHistoryRange;
-};
-
-export type GetMarketHistoryRange = typeof GetMarketHistoryRange[keyof typeof GetMarketHistoryRange];
-
-
-export const GetMarketHistoryRange = {
-  '1mo': '1mo',
-  '3mo': '3mo',
-  '6mo': '6mo',
-  '1y': '1y',
-} as const;
-
-export type GetStockHistoryParams = {
-/**
- * @minLength 1
- * @maxLength 20
- * @pattern ^[A-Za-z0-9.^=-]{1,20}$
- */
-symbol: string;
-range?: GetStockHistoryRange;
-};
-
-export type GetStockHistoryRange = typeof GetStockHistoryRange[keyof typeof GetStockHistoryRange];
-
-
-export const GetStockHistoryRange = {
-  '1mo': '1mo',
-  '3mo': '3mo',
-  '6mo': '6mo',
-  '1y': '1y',
-} as const;
-
-export type GetStockResearchDataParams = {
-/**
- * @pattern ^[A-Za-z0-9]{4,6}$
- */
-symbol: string;
-/**
- * @pattern ^[A-Za-z0-9]{4,6}\.(TW|TWO)$
- */
-ticker?: string;
-};
-
-export type GetStockAiAssessmentParams = {
-/**
- * @pattern ^[A-Za-z0-9]{4,6}(\.(TW|TWO))?$
- */
-symbol: string;
-};
-
-export type GetAccountStockAiConversationParams = {
-/**
- * @pattern ^[A-Za-z0-9]{4,6}(\.(TW|TWO))?$
- */
-symbol: string;
-};
-
-export type DeleteAccountStockAiConversationParams = {
-/**
- * @pattern ^[A-Za-z0-9]{4,6}(\.(TW|TWO))?$
- */
-symbol: string;
-};
-
-export type GetAdminUsersParams = {
-/**
- * @maxLength 120
- */
-query?: string;
-/**
- * @minimum 1
- * @maximum 100
- */
-limit?: number;
-/**
- * @minimum 0
- */
-offset?: number;
-};
-
-export type FuturesDayIntradayStatus = typeof FuturesDayIntradayStatus[keyof typeof FuturesDayIntradayStatus];
-
-
-export const FuturesDayIntradayStatus = {
-  live: 'live',
-  warming_up: 'warming_up',
-  closed: 'closed',
-  unavailable: 'unavailable',
-} as const;
-
-export type FuturesDayIntradaySignal = typeof FuturesDayIntradaySignal[keyof typeof FuturesDayIntradaySignal];
-
-
-export const FuturesDayIntradaySignal = {
-  bullish_cross: 'bullish_cross',
-  bearish_cross: 'bearish_cross',
-  no_cross: 'no_cross',
-  insufficient: 'insufficient',
-} as const;
-
-export interface FuturesMinuteBar {
-  time: string;
-  /** @exclusiveMinimum 0 */
-  open: number;
-  /** @exclusiveMinimum 0 */
-  high: number;
-  /** @exclusiveMinimum 0 */
-  low: number;
-  /** @exclusiveMinimum 0 */
-  close: number;
-}
-
-export type FuturesDailyHistoryStatus = typeof FuturesDailyHistoryStatus[keyof typeof FuturesDailyHistoryStatus];
-
-
-export const FuturesDailyHistoryStatus = {
-  available: 'available',
-  insufficient: 'insufficient',
-  unavailable: 'unavailable',
-} as const;
-
-export interface FuturesDailyBar {
-  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
-  date: string;
-  /** @pattern ^\d{6}$ */
-  contractMonth: string;
-  /** @exclusiveMinimum 0 */
-  open: number;
-  /** @exclusiveMinimum 0 */
-  high: number;
-  /** @exclusiveMinimum 0 */
-  low: number;
-  /** @exclusiveMinimum 0 */
-  close: number;
-}
-
-export interface FuturesDailyHistory {
-  status: FuturesDailyHistoryStatus;
-  bars: FuturesDailyBar[];
-  /**
-     * @exclusiveMinimum 0
-     * @nullable
-     */
-  atr14: number | null;
-  /**
-     * @exclusiveMinimum 0
-     * @nullable
-     */
-  atr14By4: number | null;
-  /** @nullable */
-  asOf: string | null;
-  source: string;
-}
-
-export interface FuturesDayIntraday {
-  status: FuturesDayIntradayStatus;
-  /** @nullable */
-  symbol: string | null;
-  /** @pattern ^\d{8}$ */
-  date: string;
-  bars: FuturesMinuteBar[];
-  /**
-     * @minimum 0
-     * @maximum 100
-     * @nullable
-     */
-  k: number | null;
-  /**
-     * @minimum 0
-     * @maximum 100
-     * @nullable
-     */
-  d: number | null;
-  signal: FuturesDayIntradaySignal;
-  /**
-     * @exclusiveMinimum 0
-     * @nullable
-     */
-  price: number | null;
-  /** @nullable */
-  change: number | null;
-  /** @nullable */
-  changePercent: number | null;
-  /** @nullable */
-  asOf: string | null;
-  source: string;
-  dailyHistory: FuturesDailyHistory;
 }
 
 export type PaperAutomationSettingsInputFuturesContract = typeof PaperAutomationSettingsInputFuturesContract[keyof typeof PaperAutomationSettingsInputFuturesContract];
@@ -3690,3 +3723,196 @@ export interface PaperAutomationDashboard {
   lastProcessedAt: string | null;
   disclaimer: string;
 }
+
+export type PaperTradeInputSide = typeof PaperTradeInputSide[keyof typeof PaperTradeInputSide];
+
+
+export const PaperTradeInputSide = {
+  buy: 'buy',
+  sell: 'sell',
+} as const;
+
+export interface PaperTradeInput {
+  /** @pattern ^[A-Za-z0-9]{4,6}\.(TW|TWO)$ */
+  ticker: string;
+  side: PaperTradeInputSide;
+  /**
+     * @minimum 1
+     * @maximum 10000000
+     */
+  shares: number;
+  /**
+     * @minimum 0.01
+     * @maximum 1000000
+     */
+  price: number;
+}
+
+export interface PaperTradingPosition {
+  ticker: string;
+  name: string;
+  shares: number;
+  averageCost: number;
+  /** @nullable */
+  latestClose: number | null;
+  /** @nullable */
+  marketValue: number | null;
+  /** @nullable */
+  unrealizedPnl: number | null;
+}
+
+export type PaperTradingTradeSide = typeof PaperTradingTradeSide[keyof typeof PaperTradingTradeSide];
+
+
+export const PaperTradingTradeSide = {
+  buy: 'buy',
+  sell: 'sell',
+} as const;
+
+export interface PaperTradingTrade {
+  id: number;
+  ticker: string;
+  name: string;
+  side: PaperTradingTradeSide;
+  shares: number;
+  price: number;
+  grossAmount: number;
+  commission: number;
+  transactionTax: number;
+  realizedPnl: number;
+  tradingDate: string;
+  createdAt: string;
+}
+
+export interface PaperTradingPortfolio {
+  initialized: boolean;
+  /** @nullable */
+  startingCash: number | null;
+  /** @nullable */
+  cash: number | null;
+  /** @nullable */
+  marketValue: number | null;
+  /** @nullable */
+  equity: number | null;
+  /** @nullable */
+  returnPercent: number | null;
+  /** @nullable */
+  asOf: string | null;
+  positions: PaperTradingPosition[];
+  /** @maxItems 100 */
+  trades: PaperTradingTrade[];
+  disclaimer: string;
+}
+
+export type GetMarketAiDailySummaryParams = {
+mode?: GetMarketAiDailySummaryMode;
+};
+
+export type GetMarketAiDailySummaryMode = typeof GetMarketAiDailySummaryMode[keyof typeof GetMarketAiDailySummaryMode];
+
+
+export const GetMarketAiDailySummaryMode = {
+  premarket: 'premarket',
+  closing: 'closing',
+} as const;
+
+export type GetMarketHistoryParams = {
+range?: GetMarketHistoryRange;
+};
+
+export type GetMarketHistoryRange = typeof GetMarketHistoryRange[keyof typeof GetMarketHistoryRange];
+
+
+export const GetMarketHistoryRange = {
+  '1mo': '1mo',
+  '3mo': '3mo',
+  '6mo': '6mo',
+  '1y': '1y',
+} as const;
+
+export type GetStockHistoryParams = {
+/**
+ * @minLength 1
+ * @maxLength 20
+ * @pattern ^[A-Za-z0-9.^=-]{1,20}$
+ */
+symbol: string;
+range?: GetStockHistoryRange;
+};
+
+export type GetStockHistoryRange = typeof GetStockHistoryRange[keyof typeof GetStockHistoryRange];
+
+
+export const GetStockHistoryRange = {
+  '1mo': '1mo',
+  '3mo': '3mo',
+  '6mo': '6mo',
+  '1y': '1y',
+} as const;
+
+export type GetStockIntradayParams = {
+/**
+ * @pattern ^[A-Za-z0-9]{4,6}$
+ */
+symbol: string;
+};
+
+export type GetStockResearchDataParams = {
+/**
+ * @pattern ^[A-Za-z0-9]{4,6}$
+ */
+symbol: string;
+/**
+ * @pattern ^[A-Za-z0-9]{4,6}\.(TW|TWO)$
+ */
+ticker?: string;
+};
+
+export type GetStockAiAssessmentParams = {
+/**
+ * @pattern ^[A-Za-z0-9]{4,6}(\.(TW|TWO))?$
+ */
+symbol: string;
+/**
+ * Use the verified current trade as the AI's conditional entry reference for monitoring.
+ */
+entryMode?: GetStockAiAssessmentEntryMode;
+};
+
+export type GetStockAiAssessmentEntryMode = typeof GetStockAiAssessmentEntryMode[keyof typeof GetStockAiAssessmentEntryMode];
+
+
+export const GetStockAiAssessmentEntryMode = {
+  current_price: 'current_price',
+} as const;
+
+export type GetAccountStockAiConversationParams = {
+/**
+ * @pattern ^[A-Za-z0-9]{4,6}(\.(TW|TWO))?$
+ */
+symbol: string;
+};
+
+export type DeleteAccountStockAiConversationParams = {
+/**
+ * @pattern ^[A-Za-z0-9]{4,6}(\.(TW|TWO))?$
+ */
+symbol: string;
+};
+
+export type GetAdminUsersParams = {
+/**
+ * @maxLength 120
+ */
+query?: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
