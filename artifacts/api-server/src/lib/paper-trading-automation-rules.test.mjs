@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   calculatePaperAutomationShares,
   calculatePaperFuturesContracts,
+  futuresStrategyRetryIntervalMs,
   isFuturesDayEntryTime,
   isFuturesNightEntryTime,
   paperAutomationExitReason,
@@ -11,9 +12,34 @@ import {
   resolvePaperFuturesEntry,
   shouldFlattenFuturesDayPosition,
   shouldFlattenFuturesNightPosition,
+  shouldRecordUnavailableFuturesDecision,
   validatePaperAutomationSignal,
   wilsonLowerBoundPercent,
 } from "./paper-trading-automation-rules.ts";
+
+test("throttles repeated unavailable futures decision records for five minutes", () => {
+  const previousAsOf = "2026-11-19T04:00:00.000Z";
+  const previousMs = Date.parse(previousAsOf);
+
+  assert.equal(shouldRecordUnavailableFuturesDecision(undefined, previousMs), true);
+  assert.equal(
+    shouldRecordUnavailableFuturesDecision(previousAsOf, previousMs + 4 * 60_000),
+    false,
+  );
+  assert.equal(
+    shouldRecordUnavailableFuturesDecision(previousAsOf, previousMs + 5 * 60_000),
+    true,
+  );
+});
+
+test("backs off repeated failed futures strategy attempts up to thirty minutes", () => {
+  assert.equal(futuresStrategyRetryIntervalMs(0), 5 * 60_000);
+  assert.equal(futuresStrategyRetryIntervalMs(1), 5 * 60_000);
+  assert.equal(futuresStrategyRetryIntervalMs(2), 10 * 60_000);
+  assert.equal(futuresStrategyRetryIntervalMs(3), 20 * 60_000);
+  assert.equal(futuresStrategyRetryIntervalMs(4), 30 * 60_000);
+  assert.equal(futuresStrategyRetryIntervalMs(10), 30 * 60_000);
+});
 
 test("Wilson lower bound is conservative and increases with a strong sample", () => {
   assert.ok(wilsonLowerBoundPercent(99, 100) < 99);

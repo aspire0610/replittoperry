@@ -67,6 +67,29 @@ const FUTURES_DAY_FLATTEN_START_MINUTE = 13 * 60 + 40;
 const FUTURES_NIGHT_ENTRY_END_MINUTE = 4 * 60 + 45;
 const FUTURES_NIGHT_FLATTEN_START_MINUTE = 4 * 60 + 55;
 export const PAPER_FORCE_ENTRY_MIN_TARGET_POINTS = 20;
+export const FUTURES_STRATEGY_RETRY_BASE_INTERVAL_MS = 5 * 60_000;
+export const FUTURES_STRATEGY_RETRY_MAX_INTERVAL_MS = 30 * 60_000;
+export const FUTURES_UNAVAILABLE_DECISION_LOG_INTERVAL_MS = 5 * 60_000;
+
+export function futuresStrategyRetryIntervalMs(failureCount: number): number {
+  if (!Number.isFinite(failureCount) || failureCount < 1) {
+    return FUTURES_STRATEGY_RETRY_BASE_INTERVAL_MS;
+  }
+  return Math.min(
+    FUTURES_STRATEGY_RETRY_MAX_INTERVAL_MS,
+    FUTURES_STRATEGY_RETRY_BASE_INTERVAL_MS * 2 ** Math.floor(failureCount - 1),
+  );
+}
+
+export function shouldRecordUnavailableFuturesDecision(
+  previousAsOf: string | undefined,
+  nowMs: number,
+): boolean {
+  if (!previousAsOf) return true;
+  const previousMs = Date.parse(previousAsOf);
+  return !Number.isFinite(previousMs) ||
+    nowMs - previousMs >= FUTURES_UNAVAILABLE_DECISION_LOG_INTERVAL_MS;
+}
 
 export function isFuturesDayEntryTime(minuteOfDay: number): boolean {
   return Number.isInteger(minuteOfDay) &&

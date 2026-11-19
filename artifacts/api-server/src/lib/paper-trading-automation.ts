@@ -39,6 +39,7 @@ import {
   calculatePaperFuturesContracts,
   isFuturesDayEntryTime,
   isFuturesNightEntryTime,
+  futuresStrategyRetryIntervalMs,
   PAPER_FORCE_ENTRY_MIN_TARGET_POINTS,
   paperAutomationExitReason,
   paperFuturesExitReason,
@@ -47,6 +48,7 @@ import {
   shouldTriggerPaperFuturesStrategyReview,
   shouldFlattenFuturesDayPosition,
   shouldFlattenFuturesNightPosition,
+  shouldRecordUnavailableFuturesDecision,
   validatePaperAutomationSignal,
   type PaperAutomationSignal,
   type PaperFuturesEntryDecision,
@@ -69,7 +71,6 @@ const FUTURES_CONTRACTS = {
   MTX: { name: "小台", multiplier: 50 },
   TMF: { name: "微台", multiplier: 10 },
 } as const;
-const FUTURES_STRATEGY_MIN_INTERVAL_MS = 5 * 60_000;
 const FUTURES_DECISION_LOG_LIMIT = 25;
 const FUTURES_DECISION_PRICE_CHANGE_POINTS = 10;
 const FUTURES_STOP_LOSS_REVIEW_THRESHOLD = 3;
@@ -91,7 +92,11 @@ export class PaperAutomationError extends Error {
 
 const cachedAutomationFuturesStrategies = new Map<
   string,
-  { lastAttemptAt: number; strategy: FuturesAiDayStrategy | null }
+  {
+    lastAttemptAt: number;
+    strategy: FuturesAiDayStrategy | null;
+    failureCount: number;
+  }
 >();
 
 type FuturesStrategyForAccount = {
@@ -289,12 +294,18 @@ function updateFuturesEvaluation(
   ]);
   const latestLog = state.futuresDecisionLogs[0];
   if (latestLog && signature(latestLog) === signature(current)) {
-    const priceMovedEnough =
-      latestLog.price !== null &&
-      current.price !== null &&
-      Math.abs(latestLog.price - current.price) >= FUTURES_DECISION_PRICE_CHANGE_POINTS;
-    const minuteElapsed = now.getTime() - Date.parse(latestLog.asOf) >= 60_000;
-    if (!priceMovedEnough && !minuteElapsed) return;
+    if (current.status === "unavailable" && latestLog.status === "unavailable") {
+      if (!shouldRecordUnavailableFuturesDecision(latestLog.asOf, now.getTime())) {
+        return;
+      }
+    } else {
+      const priceMovedEnough =
+        latestLog.price !== null &&
+        current.price !== null &&
+        Math.abs(latestLog.price - current.price) >= FUTURES_DECISION_PRICE_CHANGE_POINTS;
+      const minuteElapsed = now.getTime() - Date.parse(latestLog.asOf) >= 60_000;
+      if (!priceMovedEnough && !minuteElapsed) return;
+    }
   }
   state.futuresDecisionLogs.unshift({ ...current, id: randomUUID() });
   state.futuresDecisionLogs = state.futuresDecisionLogs.slice(0, FUTURES_DECISION_LOG_LIMIT);
@@ -818,15 +829,20 @@ async function getAutomationFuturesStrategy(
     : "base";
   const cacheKey = `${futuresStrategyKey(entryMode, forceEntry, sessionSymbol)}:${adaptiveStrategyId ?? "default"}:${feedbackHash}`;
   const cached = cachedAutomationFuturesStrategies.get(cacheKey);
+  const retryIntervalMs = cached
+    ? futuresStrategyRetryIntervalMs(cached.failureCount)
+    : 0;
   if (
     cached &&
-    now.getTime() - cached.lastAttemptAt < FUTURES_STRATEGY_MIN_INTERVAL_MS
+    now.getTime() - cached.lastAttemptAt < retryIntervalMs
   ) {
     return cached.strategy;
   }
+  const previousFailureCount = cached?.failureCount ?? 0;
   cachedAutomationFuturesStrategies.set(cacheKey, {
     lastAttemptAt: now.getTime(),
     strategy: null,
+    failureCount: previousFailureCount,
   });
   try {
     const strategy = await getFuturesAiDayStrategy(
@@ -838,11 +854,13 @@ async function getAutomationFuturesStrategy(
     cachedAutomationFuturesStrategies.set(cacheKey, {
       lastAttemptAt: now.getTime(),
       strategy,
+      failureCount: 0,
     });
   } catch {
     cachedAutomationFuturesStrategies.set(cacheKey, {
       lastAttemptAt: now.getTime(),
       strategy: null,
+      failureCount: previousFailureCount + 1,
     });
   }
   return cachedAutomationFuturesStrategies.get(cacheKey)?.strategy ?? null;
