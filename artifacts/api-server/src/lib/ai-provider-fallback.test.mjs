@@ -859,6 +859,46 @@ test("shares provider cooldown across different AI operations", async () => {
   }
 });
 
+test("includes the request ID in sanitized provider failure diagnostics", async () => {
+  const savedEnv = saveProviderEnv();
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const diagnostics = [];
+  configureTestProviders();
+  globalThis.fetch = async () => chatResponse("", 429);
+  console.log = (line) => diagnostics.push(JSON.parse(line));
+  console.error = (line) => diagnostics.push(JSON.parse(line));
+
+  try {
+    await assert.rejects(
+      withAiProviderFallback(
+        makeRequest("futures_day_strategy", {
+          allowedProviders: ["groq"],
+          requestId: "futures-strategy-test-1",
+        }),
+      ),
+      (error) => error instanceof AiProviderFallbackError,
+    );
+
+    const attemptFailure = diagnostics.find(
+      (event) => event.event === "AI_PROVIDER_ATTEMPT_FAILED",
+    );
+    const exhausted = diagnostics.find(
+      (event) => event.event === "AI_PROVIDER_FALLBACK_EXHAUSTED",
+    );
+    assert.equal(attemptFailure?.requestId, "futures-strategy-test-1");
+    assert.equal(exhausted?.requestId, "futures-strategy-test-1");
+    assert.equal(attemptFailure?.input, undefined);
+    assert.equal(exhausted?.input, undefined);
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+    globalThis.fetch = originalFetch;
+    restoreProviderEnv(savedEnv);
+  }
+});
+
 test("caps simultaneous requests to the same provider", async () => {
   configureTestProviders();
   const first = await acquireProviderSlot("groq", 2, 30_000);

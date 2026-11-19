@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   MarketDataError,
   getMarketQuotes,
@@ -1011,9 +1011,11 @@ export async function getFuturesAiDayStrategy(
   };
 
   let aiResponse: AiProviderResult;
+  const requestId = randomUUID();
   try {
     aiResponse = await withAiProviderFallback({
       operation: "futures_day_strategy",
+      requestId,
       allowedProviders: ["groq", "gemini", "openrouter", "replit"],
       instructions: strategyInstructions(
         entryMode,
@@ -1042,6 +1044,20 @@ export async function getFuturesAiDayStrategy(
       openRouterTimeoutMs: 5_000,
     });
   } catch (error) {
+    if (error instanceof AiProviderFallbackError) {
+      console.error(
+        JSON.stringify({
+          event: "FUTURES_STRATEGY_AI_UNAVAILABLE",
+          requestId,
+          operation: "futures_day_strategy",
+          responseStatus: error.status,
+          providerFailures: error.failures.map(({ status, failureKind }) => ({
+            status,
+            failureKind,
+          })),
+        }),
+      );
+    }
     throw providerError(error);
   }
 
