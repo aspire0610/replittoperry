@@ -5043,7 +5043,7 @@ function MarketHistoryChart({ bars, dark, compact }: { bars: Bar[]; dark: boolea
   );
 }
 
-function PageNavigation({ active }: { active: "dashboard" | "aiPicks" | "watchlist" | "portfolio" | "etfSavings" | "quantLab" | "paperAutotrader" | "research" | "systemSettings }) {
+function PageNavigation({ active }: { active: "dashboard" | "aiPicks" | "watchlist" | "portfolio" | "etfSavings" | "quantLab" | "paperAutotrader" | "research" | "systemSettings" }) {
   const { entries, profile, isSignedIn, isLoading, accountError } = useAccountWatchlist();
   const { signOut } = useClerk();
   const railNavRef = useRef<HTMLElement | null>(null);
